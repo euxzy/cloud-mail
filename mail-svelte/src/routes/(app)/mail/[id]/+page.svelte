@@ -8,6 +8,7 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Separator } from '$lib/components/ui/separator/index.js';
 	import { mailMessages, type MailAttachment } from '$lib/mail-data.svelte.js';
+	import RichMailBody from '$lib/components/mail/RichMailBody.svelte';
 	import { showComposer } from '$lib/mail-ui.svelte.js';
 
 	const message = $derived(mailMessages.find((item) => item.id === page.params.id) ?? null);
@@ -140,9 +141,13 @@
 			</div>
 
 			<Separator class="my-5" />
-			<div class="max-w-[720px] space-y-4 text-sm leading-[1.85] text-foreground/85">
-				{#each message.body as paragraph, index (index)}<p class="whitespace-pre-line">{paragraph}</p>{/each}
-			</div>
+			{#if message.htmlBody}
+				<RichMailBody html={message.htmlBody} class="max-w-[720px] text-sm leading-[1.85] text-foreground/85" />
+			{:else}
+				<div class="max-w-[720px] space-y-4 text-sm leading-[1.85] text-foreground/85">
+					{#each message.body as paragraph, index (index)}<p class="whitespace-pre-line">{paragraph}</p>{/each}
+				</div>
+			{/if}
 
 			{#if message.attachments?.length}
 				<section class="mt-8 max-w-[720px] rounded-xl border p-3 sm:p-4" aria-label="Attachments">

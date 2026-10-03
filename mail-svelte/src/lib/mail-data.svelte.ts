@@ -10,6 +10,7 @@ export type MailMessage = {
 	subject: string;
 	preview: string;
 	body: string[];
+	htmlBody?: string;
 	recipients?: string[];
 	attachments?: MailAttachment[];
 	status?: 'queued' | 'delivered' | 'bounced' | 'complained' | 'delayed';
