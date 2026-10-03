@@ -46,11 +46,11 @@
 	}
 </script>
 
-<section class="min-h-[calc(100svh-56px)] px-3 pb-10 pt-5 sm:px-5 sm:pt-7">
+<section class="min-h-full px-3 pb-10 pt-6 sm:px-6 sm:pt-7 lg:px-8">
 	<div class="mx-auto max-w-[1100px]">
 		<div class="flex flex-wrap items-end justify-between gap-4">
-			<div><h1 class="text-xl font-normal tracking-[-0.03em]">Invite codes</h1><p class="mt-1.5 text-xs text-muted-foreground">Create, share, and track registration codes.</p></div>
-			<div class="flex gap-2"><Button variant="outline" size="sm" class="rounded-full" onclick={clearUnused}><Trash2 data-icon="inline-start" />Clear unused</Button><Button size="sm" class="rounded-full" onclick={() => { generateCode(); showAdd = true; }}><Plus data-icon="inline-start" />Create code</Button></div>
+			<div><h1 class="text-[27px] font-semibold tracking-[-0.055em] sm:text-[30px]">Invite codes</h1><p class="mt-1 text-[13px] text-muted-foreground">Create, share, and track registration codes.</p></div>
+			<div class="flex flex-wrap gap-2"><Button variant="outline" size="sm" class="rounded-full" onclick={clearUnused}><Trash2 data-icon="inline-start" />Clear unused</Button><Button size="sm" class="rounded-full" onclick={() => { generateCode(); showAdd = true; }}><Plus data-icon="inline-start" />Create code</Button></div>
 		</div>
 		<div class="mt-5 flex flex-wrap items-center justify-between gap-3">
 			<div class="relative min-w-[190px] flex-1 sm:max-w-[340px]"><Search class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" size={14} /><Input bind:value={search} placeholder="Search invite codes" class="h-9 pl-8 text-xs" /></div>

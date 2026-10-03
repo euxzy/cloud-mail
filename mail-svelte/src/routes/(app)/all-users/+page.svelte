@@ -44,10 +44,10 @@
 	}
 </script>
 
-<section class="min-h-[calc(100svh-56px)] px-3 pb-10 pt-5 sm:px-5 sm:pt-7">
+<section class="min-h-full px-3 pb-10 pt-6 sm:px-6 sm:pt-7 lg:px-8">
 	<div class="mx-auto max-w-[1360px]">
 		<div class="flex flex-wrap items-end justify-between gap-4">
-			<div><h1 class="text-xl font-normal tracking-[-0.03em]">Users</h1><p class="mt-1.5 text-xs text-muted-foreground">Manage workspace access, roles, and sending limits.</p></div>
+			<div><h1 class="text-[27px] font-semibold tracking-[-0.055em] sm:text-[30px]">Users</h1><p class="mt-1 text-[13px] text-muted-foreground">Manage workspace access, roles, and sending limits.</p></div>
 			<Button size="sm" class="rounded-full" onclick={() => (showAdd = true)}><Plus data-icon="inline-start" />Add user</Button>
 		</div>
 

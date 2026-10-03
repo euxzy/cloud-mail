@@ -32,9 +32,9 @@
 	}
 </script>
 
-<section class="min-h-[calc(100svh-56px)] px-3 pb-10 pt-5 sm:px-5 sm:pt-7">
+<section class="min-h-full px-3 pb-10 pt-6 sm:px-6 sm:pt-7 lg:px-8">
 	<div class="mx-auto max-w-[920px]">
-		<div class="mb-6"><h1 class="text-xl font-normal tracking-[-0.03em]">Settings</h1><p class="mt-1.5 text-xs text-muted-foreground">Manage your account profile and security.</p></div>
+		<div class="mb-7"><h1 class="text-[27px] font-semibold tracking-[-0.055em] sm:text-[30px]">Settings</h1><p class="mt-1 text-[13px] text-muted-foreground">Manage your account profile and security.</p></div>
 		<div class="grid gap-6 md:grid-cols-[190px_minmax(0,1fr)] md:gap-10">
 			<nav aria-label="Settings sections" class="flex gap-1 overflow-x-auto md:flex-col md:gap-0.5">
 				<a href="#profile" class="inline-flex h-9 shrink-0 items-center gap-2 rounded-full bg-secondary px-3 text-xs font-medium md:rounded-lg"><UserRound size={14} />Profile</a>
@@ -79,7 +79,7 @@
 		<button class="absolute inset-0" aria-label="Close password dialog" onclick={() => (passwordOpen = false)}></button>
 		<section role="dialog" aria-modal="true" aria-labelledby="password-title" class="relative z-10 w-full max-w-[390px] rounded-2xl border bg-background p-5 shadow-xl">
 			<h2 id="password-title" class="text-sm font-semibold">Change password</h2><p class="mt-1 text-[10px] text-muted-foreground">Enter and confirm your new password.</p>
-			<form class="mt-4 space-y-3" onsubmit={changePassword}><Input bind:value={newPassword} type="password" minlength="6" required placeholder="New password" class="h-9 text-xs" /><Input bind:value={confirmPassword} type="password" minlength="6" required placeholder="Confirm new password" class="h-9 text-xs" /><div class="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" size="sm" class="rounded-full" onclick={() => (passwordOpen = false)}>Cancel</Button><Button type="submit" size="sm" class="rounded-full">Save password</Button></div></form>
+			<form class="mt-4 space-y-3" onsubmit={changePassword}><Input bind:value={newPassword} type="password" minlength={6} required placeholder="New password" class="h-9 text-xs" /><Input bind:value={confirmPassword} type="password" minlength={6} required placeholder="Confirm new password" class="h-9 text-xs" /><div class="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" size="sm" class="rounded-full" onclick={() => (passwordOpen = false)}>Cancel</Button><Button type="submit" size="sm" class="rounded-full">Save password</Button></div></form>
 		</section>
 	</div>
 {/if}

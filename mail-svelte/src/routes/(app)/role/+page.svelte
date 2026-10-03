@@ -65,11 +65,11 @@
 	}
 </script>
 
-<section class="min-h-[calc(100svh-56px)] px-3 pb-10 pt-5 sm:px-5 sm:pt-7">
+<section class="min-h-full px-3 pb-10 pt-6 sm:px-6 sm:pt-7 lg:px-8">
 	<div class="mx-auto max-w-[1180px]">
 		<div class="flex flex-wrap items-end justify-between gap-4">
-			<div><h1 class="text-xl font-normal tracking-[-0.03em]">Permissions</h1><p class="mt-1.5 text-xs text-muted-foreground">Define what each role can access and send.</p></div>
-			<div class="flex gap-2"><Button variant="outline" size="sm" class="rounded-full" onclick={() => (notice = 'Role list refreshed.') }><RefreshCw data-icon="inline-start" />Refresh</Button><Button size="sm" class="rounded-full" onclick={openNew}><Plus data-icon="inline-start" />Create role</Button></div>
+			<div><h1 class="text-[27px] font-semibold tracking-[-0.055em] sm:text-[30px]">Permissions</h1><p class="mt-1 text-[13px] text-muted-foreground">Define what each role can access and send.</p></div>
+			<div class="flex flex-wrap gap-2"><Button variant="outline" size="sm" class="rounded-full" onclick={() => (notice = 'Role list refreshed.') }><RefreshCw data-icon="inline-start" />Refresh</Button><Button size="sm" class="rounded-full" onclick={openNew}><Plus data-icon="inline-start" />Create role</Button></div>
 		</div>
 
 		<div class="mt-5 overflow-x-auto rounded-xl border">
@@ -100,8 +100,8 @@
 		<section role="dialog" aria-modal="true" aria-labelledby="role-editor-title" class="relative z-10 max-h-[90svh] w-full max-w-[640px] overflow-y-auto rounded-2xl border bg-background p-5 shadow-xl">
 			<div class="flex items-center justify-between"><div><h2 id="role-editor-title" class="text-sm font-semibold">{editingId ? 'Edit role' : 'Create role'}</h2><p class="mt-1 text-[10px] text-muted-foreground">Set access, quotas, and domain restrictions.</p></div><MoreHorizontal size={17} class="text-muted-foreground" /></div>
 			<form class="mt-4 space-y-4" onsubmit={saveRole}>
-				<div class="grid gap-3 sm:grid-cols-2"><label class="space-y-1 text-[10px] font-medium"><span>Role name</span><Input bind:value={roleName} required maxlength="24" class="h-9 text-xs" /></label><label class="space-y-1 text-[10px] font-medium"><span>Description</span><Input bind:value={description} maxlength="80" class="h-9 text-xs" /></label></div>
-				<div class="grid gap-3 sm:grid-cols-2"><label class="space-y-1 text-[10px] font-medium"><span>Daily send limit (0 = unlimited)</span><Input bind:value={sendLimit} type="number" min="0" class="h-9 text-xs" /></label><label class="space-y-1 text-[10px] font-medium"><span>Mailbox limit (0 = unlimited)</span><Input bind:value={mailboxLimit} type="number" min="0" class="h-9 text-xs" /></label></div>
+				<div class="grid gap-3 sm:grid-cols-2"><label class="space-y-1 text-[10px] font-medium"><span>Role name</span><Input bind:value={roleName} required maxlength={24} class="h-9 text-xs" /></label><label class="space-y-1 text-[10px] font-medium"><span>Description</span><Input bind:value={description} maxlength={80} class="h-9 text-xs" /></label></div>
+				<div class="grid gap-3 sm:grid-cols-2"><label class="space-y-1 text-[10px] font-medium"><span>Daily send limit (0 = unlimited)</span><Input bind:value={sendLimit} type="number" min={0} class="h-9 text-xs" /></label><label class="space-y-1 text-[10px] font-medium"><span>Mailbox limit (0 = unlimited)</span><Input bind:value={mailboxLimit} type="number" min={0} class="h-9 text-xs" /></label></div>
 				<label class="flex items-center gap-2 text-[10px]"><input bind:checked={roleDefault} type="checkbox" class="size-3.5 accent-primary" />Make this the default role for new users</label>
 				<div class="rounded-xl border p-3"><p class="text-[10px] font-semibold">Access permissions</p><div class="mt-3 grid gap-4 sm:grid-cols-3">{#each permissionGroups as group (group.name)}<fieldset><legend class="mb-2 text-[9px] font-medium text-muted-foreground">{group.name}</legend><div class="space-y-2">{#each group.items as permission (permission)}<label class="flex items-center gap-2 text-[9px]"><input type="checkbox" checked={permissions.includes(permission)} onchange={() => togglePermission(permission)} class="size-3 accent-primary" />{permission}</label>{/each}</div></fieldset>{/each}</div></div>
 				<div class="flex justify-end gap-2"><Button type="button" variant="ghost" size="sm" class="rounded-full" onclick={() => (showForm = false)}>Cancel</Button><Button type="submit" size="sm" class="rounded-full">Save role</Button></div>

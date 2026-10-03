@@ -2,12 +2,13 @@
 	import { Bell, ChevronDown, Mail, Menu, Moon, Search, Settings, Sun } from '@lucide/svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { Avatar } from '$lib/components/ui/avatar/index.js';
+	import * as Avatar from '$lib/components/ui/avatar/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import AccountManagerDialog from '$lib/components/mail/AccountManagerDialog.svelte';
 	import ComposeDialog from '$lib/components/mail/ComposeDialog.svelte';
 	import MailSidebar from '$lib/components/mail/MailSidebar.svelte';
+	import Brand from '$lib/components/mail/Brand.svelte';
 	import { mailUi, showComposer } from '$lib/mail-ui.svelte.js';
 	import { mailAccounts } from '$lib/mail-accounts.svelte.js';
 
@@ -16,6 +17,7 @@
 	let profileOpen = $state(false);
 	let noticeOpen = $state(false);
 	let darkMode = $state(false);
+	let mainElement: HTMLElement;
 
 	const title = $derived.by(() => {
 		const path = page.url.pathname;
@@ -49,6 +51,11 @@
 		darkMode = localStorage.getItem('cloud-mail-theme') === 'dark';
 		document.documentElement.classList.toggle('dark', darkMode);
 	});
+
+	$effect(() => {
+		page.url.pathname;
+		if (mainElement) mainElement.scrollTop = 0;
+	});
 </script>
 
 <svelte:head>
@@ -56,31 +63,29 @@
 	<meta name="description" content="Cloud Mail workspace." />
 </svelte:head>
 
-<div class="flex min-h-svh flex-col bg-background text-foreground">
-	<header class="z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-background px-3 sm:gap-4 sm:px-4">
+<div class="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
+	<a href="#main-content" class="sr-only z-50 focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:rounded-lg focus:bg-card focus:px-4 focus:py-2">Skip to content</a>
+	<header class="z-20 flex h-16 shrink-0 items-center gap-3 border-b bg-card px-4 sm:gap-5 sm:px-6 lg:h-[72px] lg:px-7">
 		<Button variant="ghost" size="icon-sm" class="lg:hidden" aria-label="Open navigation" onclick={() => (menuOpen = true)}>
 			<Menu data-icon="inline-start" />
 		</Button>
-		<a href="/inbox" class="flex shrink-0 items-center gap-2" aria-label="Cloud Mail home">
-			<span class="flex size-7 items-center justify-center rounded-lg bg-primary text-primary-foreground"><Mail size={14} /></span>
-			<span class="hidden text-sm font-semibold tracking-[-0.045em] sm:inline">cloud mail</span>
-		</a>
+		<a href="/inbox" class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground sm:hidden" aria-label="Cloud Mail home"><Mail size={16} /></a>
+		<div class="hidden w-[238px] shrink-0 sm:block"><Brand /></div>
 
-		<div class="relative ml-1 flex min-w-0 flex-1 sm:ml-4 sm:max-w-[680px]">
-			<Search class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={15} />
-			<Input bind:value={mailUi.query} aria-label="Search messages" placeholder="Search mail" class="h-10 rounded-full border-transparent bg-muted/70 pl-9 text-xs shadow-none focus-visible:border-border focus-visible:bg-background" />
+		<div class="relative flex min-w-0 flex-1 sm:max-w-[520px]">
+			<Search class="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground" size={17} />
+			<Input bind:value={mailUi.query} aria-label="Search messages" placeholder="Search your mail" class="h-10 rounded-xl border-transparent bg-muted/70 pl-10 text-sm shadow-none focus-visible:border-ring focus-visible:bg-background" />
 		</div>
 
-		<div class="ml-auto flex shrink-0 items-center gap-0.5">
-			<span class="hidden rounded-full border px-2 py-1 text-[9px] font-medium text-muted-foreground sm:inline-flex">PREVIEW</span>
+		<div class="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
 			<Button variant="ghost" size="icon-sm" class="text-muted-foreground" aria-label={darkMode ? 'Switch to light theme' : 'Switch to dark theme'} onclick={toggleTheme}>
 				{#if darkMode}<Sun data-icon="inline-start" />{:else}<Moon data-icon="inline-start" />{/if}
 			</Button>
 			<Button variant="ghost" size="icon-sm" class="text-muted-foreground" aria-label="Announcements" onclick={() => (noticeOpen = true)}><Bell data-icon="inline-start" /></Button>
 			<Button href="/settings" variant="ghost" size="icon-sm" class="hidden text-muted-foreground sm:inline-flex" aria-label="Settings"><Settings data-icon="inline-start" /></Button>
 			<div class="relative">
-				<Button variant="ghost" class="ml-1 h-9 gap-2 rounded-full px-1.5" aria-expanded={profileOpen} aria-label="Open account menu" onclick={() => (profileOpen = !profileOpen)}>
-					<Avatar.Root size="sm"><Avatar.Fallback class="bg-secondary text-[10px] font-semibold">SA</Avatar.Fallback></Avatar.Root>
+				<Button variant="ghost" class="ml-1 h-10 gap-2 rounded-xl px-1.5" aria-expanded={profileOpen} aria-label="Open account menu" onclick={() => (profileOpen = !profileOpen)}>
+					<Avatar.Root size="sm"><Avatar.Fallback class="bg-secondary text-xs font-semibold text-secondary-foreground">SA</Avatar.Fallback></Avatar.Root>
 					<ChevronDown class="hidden text-muted-foreground sm:block" size={13} />
 				</Button>
 				{#if profileOpen}
@@ -102,15 +107,15 @@
 		</div>
 	</header>
 
-	<div class="flex min-h-0 flex-1">
+	<div class="flex min-h-0 flex-1 overflow-hidden">
 		<MailSidebar class="hidden lg:flex" onCompose={openComposer} onAccounts={openAccounts} />
-		<main class="min-w-0 flex-1">{@render children()}</main>
+		<main bind:this={mainElement} id="main-content" class="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-card lg:m-3 lg:ml-0 lg:rounded-2xl lg:border lg:shadow-[0_12px_40px_-30px_rgba(20,80,85,0.35)]">{@render children()}</main>
 	</div>
 
 	{#if menuOpen}
 		<div class="fixed inset-0 z-40 bg-foreground/20 lg:hidden">
 			<button class="absolute inset-0 h-full w-full cursor-default" aria-label="Close navigation" onclick={() => (menuOpen = false)}></button>
-			<MailSidebar class="absolute bottom-0 left-0 top-14 z-10 h-auto shadow-xl" onNavigate={() => (menuOpen = false)} onCompose={openComposer} onAccounts={openAccounts} />
+			<MailSidebar class="absolute bottom-0 left-0 top-16 z-10 h-auto shadow-xl" onNavigate={() => (menuOpen = false)} onCompose={openComposer} onAccounts={openAccounts} />
 		</div>
 	{/if}
 	{#if mailUi.composeOpen}<ComposeDialog />{/if}

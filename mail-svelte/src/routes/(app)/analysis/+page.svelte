@@ -14,22 +14,22 @@
 	let range = $state('Last 12 months');
 </script>
 
-<section class="min-h-[calc(100svh-56px)] px-3 pb-10 pt-5 sm:px-5 sm:pt-7">
+<section class="min-h-full px-3 pb-10 pt-6 sm:px-6 sm:pt-7 lg:px-8">
 	<div class="mx-auto max-w-[1180px]">
 		<div class="flex flex-wrap items-end justify-between gap-4">
-			<div><h1 class="text-xl font-normal tracking-[-0.03em]">Analytics</h1><p class="mt-1.5 text-xs text-muted-foreground">A workspace-wide view of mailbox activity.</p></div>
-			<select bind:value={range} aria-label="Date range" class="h-9 rounded-full border bg-background px-3 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring">
+			<div><h1 class="text-[27px] font-semibold tracking-[-0.055em] sm:text-[30px]">Analytics</h1><p class="mt-1 text-[13px] text-muted-foreground">A workspace-wide view of mailbox activity.</p></div>
+			<select bind:value={range} aria-label="Date range" class="h-10 rounded-lg border bg-background px-3 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring">
 				<option>Last 12 months</option><option>Last 30 days</option><option>Last 7 days</option>
 			</select>
 		</div>
 
-		<div class="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+		<div class="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
 			{#each summary as item (item.label)}
 				{@const Icon = item.icon}
-				<div class="rounded-xl border bg-card p-4">
-					<div class="flex items-center justify-between gap-3"><span class="text-[11px] text-muted-foreground">{item.label}</span><Icon size={16} class="text-muted-foreground" /></div>
-					<div class="mt-3 flex items-baseline gap-2"><span class="text-2xl font-medium tracking-[-0.04em]">{item.value}</span><span class="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground"><ArrowUpRight size={12} />{item.delta}</span></div>
-					<div class="mt-3 flex gap-3 text-[9px] text-muted-foreground"><span>{item.active}</span><span>{item.deleted}</span></div>
+				<div class="rounded-xl bg-muted/55 p-4 sm:p-5">
+					<div class="flex items-center justify-between gap-3"><span class="text-xs font-medium text-muted-foreground">{item.label}</span><Icon size={16} class="text-primary" /></div>
+					<div class="mt-4 flex items-baseline gap-2"><span class="text-[29px] font-semibold tracking-[-0.05em]">{item.value}</span><span class="inline-flex items-center gap-0.5 text-[11px] text-primary"><ArrowUpRight size={12} />{item.delta}</span></div>
+					<div class="mt-2 flex gap-3 text-[10px] text-muted-foreground"><span>{item.active}</span><span>{item.deleted}</span></div>
 				</div>
 			{/each}
 		</div>

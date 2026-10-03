@@ -59,10 +59,10 @@
 	}
 </script>
 
-<section class="min-h-[calc(100svh-56px)] px-3 pb-10 pt-5 sm:px-5 sm:pt-7">
+<section class="min-h-full px-3 pb-10 pt-6 sm:px-6 sm:pt-7 lg:px-8">
 	<div class="mx-auto max-w-[1180px]">
 		<div class="flex flex-wrap items-end justify-between gap-4">
-			<div><h1 class="text-xl font-normal tracking-[-0.03em]">System settings</h1><p class="mt-1.5 text-xs text-muted-foreground">Configure registration, mail behavior, and workspace defaults.</p></div>
+			<div><h1 class="text-[27px] font-semibold tracking-[-0.055em] sm:text-[30px]">System settings</h1><p class="mt-1 text-[13px] text-muted-foreground">Configure registration, mail behavior, and workspace defaults.</p></div>
 			<div class="flex items-center gap-2"><Badge variant="outline" class="h-5 rounded-full px-2 text-[9px]">Admin</Badge><Button type="submit" form="system-settings-form" size="sm" class="rounded-full"><Save data-icon="inline-start" />Save settings</Button></div>
 		</div>
 

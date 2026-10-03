@@ -3,7 +3,7 @@
 	import { onDestroy } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { Avatar } from '$lib/components/ui/avatar/index.js';
+	import * as Avatar from '$lib/components/ui/avatar/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Separator } from '$lib/components/ui/separator/index.js';
@@ -96,7 +96,7 @@
 	}
 </script>
 
-<section class="min-h-[calc(100svh-56px)] px-3 pb-10 pt-3 sm:px-5 sm:pt-4">
+<section class="min-h-full px-3 pb-10 pt-3 sm:px-6 sm:pt-4 lg:px-8">
 	<div class="flex items-center justify-between border-b pb-2">
 		<div class="flex items-center gap-1">
 			<Button href={backHref} variant="ghost" size="icon-sm" aria-label="Back to mail list"><ArrowLeft data-icon="inline-start" /></Button>
@@ -109,10 +109,10 @@
 	</div>
 
 	{#if message}
-		<article class="mx-auto max-w-[900px] pt-5 sm:pt-8">
+		<article class="mx-auto max-w-[900px] pt-6 sm:pt-9">
 			<div class="flex flex-wrap items-start justify-between gap-3">
 				<div class="flex min-w-0 flex-wrap items-center gap-2">
-					<h1 class="text-xl font-normal leading-snug tracking-[-0.035em] sm:text-2xl">{message.subject}</h1>
+					<h1 class="text-[26px] font-semibold leading-tight tracking-[-0.05em] sm:text-[32px]">{message.subject}</h1>
 					{#if message.label}<Badge variant="secondary" class="h-5 rounded px-1.5 text-[10px] font-medium text-muted-foreground">{message.label}</Badge>{/if}
 					{#if message.status}<Badge variant={message.status === 'bounced' ? 'destructive' : 'outline'} class="h-5 rounded-full px-2 text-[9px]">{message.status}</Badge>{/if}
 				</div>
@@ -140,7 +140,7 @@
 			</div>
 
 			<Separator class="my-5" />
-			<div class="max-w-[720px] space-y-4 text-[13px] leading-[1.85] text-foreground/85">
+			<div class="max-w-[720px] space-y-4 text-sm leading-[1.85] text-foreground/85">
 				{#each message.body as paragraph, index (index)}<p class="whitespace-pre-line">{paragraph}</p>{/each}
 			</div>
 

@@ -13,7 +13,7 @@
 	let notice = $state('');
 	let contactsOpen = $state(false);
 	let attachments = $state<MailAttachment[]>(mailMessages.find((message) => message.id === draftId)?.attachments ?? []);
-	let recipientField: HTMLInputElement | null = null;
+	let recipientField = $state<HTMLInputElement | null>(null);
 	let editor: HTMLTextAreaElement | null = null;
 	let attachmentInput: HTMLInputElement | null = null;
 	const recentContacts = ['nisa@ruangrupa.co', 'adrian@northstar.studio', 'maya@kawan.id', 'raka@studio-sore.com'];
@@ -137,7 +137,7 @@
 				{#each recipients as email, index (email)}
 					<span class="inline-flex max-w-[230px] items-center gap-1 rounded-full bg-secondary px-2 py-1 text-[10px]"><span class="truncate">{email}</span><button type="button" aria-label={`Remove ${email}`} onclick={() => (recipients = recipients.filter((_, itemIndex) => itemIndex !== index))}>×</button></span>
 				{/each}
-				<Input bind:this={recipientField} bind:value={recipientInput} type="text" aria-label="Recipient email" placeholder={recipients.length ? 'Add another recipient' : 'name@example.com'} class="h-7 min-w-[150px] flex-1 border-0 px-0 text-[11px] shadow-none focus-visible:ring-0" onkeydown={handleRecipientKeydown} onblur={() => { if (recipientInput.includes('@') && recipientInput.includes('.')) addRecipient(); }} />
+				<Input bind:ref={recipientField} bind:value={recipientInput} type="text" aria-label="Recipient email" placeholder={recipients.length ? 'Add another recipient' : 'name@example.com'} class="h-7 min-w-[150px] flex-1 border-0 px-0 text-[11px] shadow-none focus-visible:ring-0" onkeydown={handleRecipientKeydown} onblur={() => { if (recipientInput.includes('@') && recipientInput.includes('.')) addRecipient(); }} />
 				<div class="relative"><Button type="button" variant="ghost" size="icon-xs" aria-label="Choose recent contacts" onclick={openContacts}><ContactRound data-icon="inline-start" /></Button>{#if contactsOpen}<div class="absolute right-0 top-8 z-20 w-[250px] rounded-xl border bg-popover p-2 shadow-lg"><p class="px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Recent contacts</p>{#each recentContacts as contact (contact)}<button type="button" class="block w-full truncate rounded-lg px-2 py-2 text-left text-[10px] hover:bg-muted" onclick={() => addContact(contact)}>{contact}</button>{/each}</div>{/if}</div>
 			</div>
 			<label class="flex items-center gap-3 border-b py-2.5 text-xs"><span class="w-7 text-[10px] text-muted-foreground">Subject</span><Input bind:value={subject} placeholder="Subject" class="h-8 border-0 px-0 text-xs shadow-none focus-visible:ring-0" /></label>
