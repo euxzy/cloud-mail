@@ -8,10 +8,12 @@
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import { mailMessages, type Folder, type MailMessage } from '$lib/mail-data.svelte.js';
 	import { mailUi, showComposer } from '$lib/mail-ui.svelte.js';
+	import { formatImage } from '$lib/mail-settings.svelte.js';
 	import { hasPermission } from '$lib/permissions.svelte.js';
 	import { goto } from '$app/navigation';
 	import { deleteApiEmails, markApiEmailsRead, setApiEmailStar } from '$lib/api/mail.js';
 	import { deleteDrafts } from '$lib/draft-store.js';
+	import { plainTextToHtml, sanitizeRichHtml } from '$lib/rich-text.js';
 	import { toast } from 'svelte-sonner';
 
 	type Props = { folder: Folder };
@@ -176,14 +178,25 @@
 	}
 
 	function replyTo(message: MailMessage) {
-		const quoted = message.body.join('\n').split('\n').map((line) => `> ${line}`).join('\n');
-		showComposer(message.folder === 'sent' ? message.recipients?.[0] ?? '' : message.address, `Re: ${message.subject}`, `\n\nOn ${message.date}, ${message.from} wrote:\n${quoted}`);
+		const attribution = `On ${message.date}, ${message.from} wrote:`;
+		const quotedHtml = message.htmlBody ? sanitizeRichHtml(formatImage(message.htmlBody)) : plainTextToHtml(message.body.join('\n'));
+		const bodyHtml = `<p><br></p><blockquote><p>${attribution.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>${quotedHtml}</blockquote>`;
+		showComposer(
+			message.folder === 'sent' ? message.recipients?.[0] ?? '' : message.address,
+			`Re: ${message.subject}`,
+			`${attribution}\n\n${message.body.join('\n')}`,
+			'',
+			bodyHtml,
+			true
+		);
 		context = null;
 	}
 
 	function forwardMessage(message: MailMessage) {
-		const quoted = message.body.join('\n').split('\n').map((line) => `> ${line}`).join('\n');
-		showComposer('', `Fwd: ${message.subject}`, `\n\n---------- Forwarded message ----------\nFrom: ${message.from} <${message.address}>\nSubject: ${message.subject}\n\n${quoted}`);
+		const quotedHtml = message.htmlBody ? sanitizeRichHtml(formatImage(message.htmlBody)) : plainTextToHtml(message.body.join('\n'));
+		const header = `---------- Forwarded message ----------\nFrom: ${message.from} <${message.address}>\nSubject: ${message.subject}`;
+		const safeHeader = header.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+		showComposer('', `Fwd: ${message.subject}`, `${header}\n\n${message.body.join('\n')}`, '', `<p><br></p><blockquote><p>${safeHeader}</p>${quotedHtml}</blockquote>`, true);
 		context = null;
 	}
 

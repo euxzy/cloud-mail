@@ -15,6 +15,8 @@
 	import { hasPermission } from '$lib/permissions.svelte.js';
 	import { deleteApiEmails, fetchApiAllMessages, fetchApiMessage, fetchApiStarredMessage, markApiEmailsRead, setApiEmailStar } from '$lib/api/mail.js';
 	import { assetUrl } from '$lib/api/config.js';
+	import { formatImage } from '$lib/mail-settings.svelte.js';
+	import { plainTextToHtml, sanitizeRichHtml } from '$lib/rich-text.js';
 	import { toast } from 'svelte-sonner';
 
 	const message = $derived(mailMessages.find((item) => item.id === page.params.id) ?? null);
@@ -113,16 +115,29 @@
 	}
 
 	function reply() {
-		if (!message) return;
-		const recipient = message.folder === 'sent' ? (message.recipients?.[0] ?? '') : message.address;
-		const quotedBody = message.body.join('\n').split('\n').map((line) => `> ${line}`).join('\n');
-		showComposer(recipient, `Re: ${message.subject}`, `\n\nOn ${message.date}, ${message.from} wrote:\n${quotedBody}`);
+		const current = message;
+		if (!current) return;
+		const recipient = current.folder === 'sent' ? (current.recipients?.[0] ?? '') : current.address;
+		const attribution = `On ${current.date}, ${current.from} wrote:`;
+		const quotedHtml = current.htmlBody ? sanitizeRichHtml(formatImage(current.htmlBody)) : plainTextToHtml(current.body.join('\n'));
+		const safeAttribution = attribution.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+		showComposer(
+			recipient,
+			`Re: ${current.subject}`,
+			`${attribution}\n\n${current.body.join('\n')}`,
+			'',
+			`<p><br></p><blockquote><p>${safeAttribution}</p>${quotedHtml}</blockquote>`,
+			true
+		);
 	}
 
 	function forward() {
-		if (!message) return;
-		const forwardedBody = message.body.join('\n').split('\n').map((line) => `> ${line}`).join('\n');
-		showComposer('', `Fwd: ${message.subject}`, `\n\n---------- Forwarded message ----------\nFrom: ${message.from} <${message.address}>\nDate: ${message.date}\nSubject: ${message.subject}\n\n${forwardedBody}`);
+		const current = message;
+		if (!current) return;
+		const header = `---------- Forwarded message ----------\nFrom: ${current.from} <${current.address}>\nDate: ${current.date}\nSubject: ${current.subject}`;
+		const safeHeader = header.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+		const quotedHtml = current.htmlBody ? sanitizeRichHtml(formatImage(current.htmlBody)) : plainTextToHtml(current.body.join('\n'));
+		showComposer('', `Fwd: ${current.subject}`, `${header}\n\n${current.body.join('\n')}`, '', `<p><br></p><blockquote><p>${safeHeader}</p>${quotedHtml}</blockquote>`, true);
 	}
 
 	function showAttachment(attachment: MailAttachment) {

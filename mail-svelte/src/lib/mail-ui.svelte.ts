@@ -5,6 +5,8 @@ export const mailUi = $state({
 	composeTo: '',
 	composeSubject: '',
 	composeBody: '',
+	composeHtmlBody: '',
+	composeFocusBody: false,
 	composeDraftId: '',
 	currentAccountId: 1,
 	refreshKey: 0,
@@ -14,10 +16,12 @@ export const mailUi = $state({
 	mailboxLoading: false
 });
 
-export function showComposer(to = '', subject = '', body = '', draftId = '') {
+export function showComposer(to = '', subject = '', body = '', draftId = '', htmlBody = '', focusBody = false) {
 	mailUi.composeTo = to;
 	mailUi.composeSubject = subject;
 	mailUi.composeBody = body;
+	mailUi.composeHtmlBody = htmlBody;
+	mailUi.composeFocusBody = focusBody;
 	mailUi.composeDraftId = draftId;
 	mailUi.composeOpen = true;
 }
@@ -27,5 +31,7 @@ export function hideComposer() {
 	mailUi.composeTo = '';
 	mailUi.composeSubject = '';
 	mailUi.composeBody = '';
+	mailUi.composeHtmlBody = '';
+	mailUi.composeFocusBody = false;
 	mailUi.composeDraftId = '';
 }

@@ -1,23 +1,12 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { mailSettings } from '$lib/mail-settings.svelte.js';
+	import { formatImage } from '$lib/mail-settings.svelte.js';
 
 	let { html, class: className = '' }: { html: string; class?: string } = $props();
 	let frame = $state<HTMLIFrameElement | null>(null);
 	let srcdoc = $state('');
 	let frameHeight = $state(220);
 	let resizeObserver: ResizeObserver | null = null;
-
-	function toOssDomain(domain: string) {
-		if (!domain) return '';
-		if (!/^https?:\/\//i.test(domain)) return `https://${domain}`;
-		return domain.replace(/\/+$/, '');
-	}
-
-	function formatImage(content: string) {
-		const domain = mailSettings.r2Domain;
-		return (content || '').replace(/\{\{domain\}\}/g, `${toOssDomain(domain)}/`);
-	}
 
 	function isSafeUrlAttribute(name: string, value: string) {
 		const normalized = value.trim().replace(/[\u0000-\u0020]+/g, '');

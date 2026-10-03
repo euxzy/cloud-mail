@@ -1,11 +1,13 @@
 const allowedTags: Record<string, string> = {
 	B: 'strong', STRONG: 'strong', I: 'em', EM: 'em', U: 'u', SPAN: 'span',
 	S: 's', STRIKE: 's', DEL: 's', CODE: 'code', PRE: 'pre',
-	P: 'p', DIV: 'p', BR: 'br', UL: 'ul', OL: 'ol', LI: 'li',
+	P: 'p', BR: 'br', UL: 'ul', OL: 'ol', LI: 'li',
 	H1: 'h1', H2: 'h2', H3: 'h3', H4: 'h4', H5: 'h5', H6: 'h6',
 	BLOCKQUOTE: 'blockquote', HR: 'hr', A: 'a', IMG: 'img',
 	TABLE: 'table', THEAD: 'thead', TBODY: 'tbody', TR: 'tr', TH: 'th', TD: 'td'
 };
+
+export const richBlockquoteStyle = 'margin: 0 0 8px; border-left: 3px solid #cbd5e1; padding-left: 12px; color: #64748b;';
 
 export function normalizeRichImage(value: string): string | null {
 	if (/^data:image\/(?:png|jpeg|gif|webp);base64,[a-z0-9+/=]+$/i.test(value)) return value;
@@ -36,8 +38,12 @@ export function sanitizeRichHtml(html: string): string {
 		if (node.nodeType !== Node.ELEMENT_NODE) return null;
 		const element = node as Element;
 		if (['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'SVG', 'FORM'].includes(element.tagName)) return null;
-		const tag = allowedTags[element.tagName];
+		const hasBlockChildren = element.tagName === 'DIV' && Array.from(element.children).some((child) =>
+			['DIV', 'P', 'UL', 'OL', 'LI', 'PRE', 'BLOCKQUOTE', 'TABLE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'].includes(child.tagName)
+		);
+		const tag = hasBlockChildren ? undefined : element.tagName === 'DIV' ? 'p' : allowedTags[element.tagName];
 		const safe = tag ? document.createElement(tag) : document.createDocumentFragment();
+		if (tag === 'blockquote') (safe as HTMLElement).setAttribute('style', richBlockquoteStyle);
 		if (tag === 'span') {
 			const styles: string[] = [];
 			const color = (element as HTMLElement).style.color;

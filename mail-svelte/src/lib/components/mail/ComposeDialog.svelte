@@ -3,6 +3,7 @@
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { Editor } from '@tiptap/core';
+	import Blockquote from '@tiptap/extension-blockquote';
 	import StarterKit from '@tiptap/starter-kit';
 	import Image from '@tiptap/extension-image';
 	import { TableKit } from '@tiptap/extension-table';
@@ -15,7 +16,7 @@
 	import { Switch } from '$lib/components/ui/switch/index.js';
 	import { hideComposer, mailUi } from '$lib/mail-ui.svelte.js';
 	import { mailMessages, type MailAttachment, type MailMessage } from '$lib/mail-data.svelte.js';
-	import { normalizeRichImage, normalizeRichLink, plainTextToHtml, sanitizeRichHtml } from '$lib/rich-text.js';
+	import { normalizeRichImage, normalizeRichLink, plainTextToHtml, richBlockquoteStyle, sanitizeRichHtml } from '$lib/rich-text.js';
 	import RichMailBody from '$lib/components/mail/RichMailBody.svelte';
 	import { mailAccounts } from '$lib/mail-accounts.svelte.js';
 	import { hasPermission } from '$lib/permissions.svelte.js';
@@ -25,12 +26,18 @@
 	import { deleteDrafts, saveDraft as persistDraft } from '$lib/draft-store.js';
 	import { toast } from 'svelte-sonner';
 
-	let recipientInput = $state('');
-	let recipients = $state<string[]>(mailUi.composeTo ? mailUi.composeTo.split(',').map((email) => email.trim()).filter(Boolean) : []);
-	let subject = $state(mailUi.composeSubject);
-	let bodyText = $state('');
 	const draftId = mailUi.composeDraftId;
 	const existingDraft = mailMessages.find((message) => message.id === draftId);
+	function splitRecipientAddresses(value: string) {
+		return value.split(/[,;\n]+/).map((email) => email.trim()).filter(Boolean);
+	}
+	function isEmailAddress(value: string) {
+		return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+	}
+	let recipientInput = $state('');
+	let recipients = $state<string[]>([...new Set((existingDraft?.recipients ?? [mailUi.composeTo]).flatMap(splitRecipientAddresses))]);
+	let subject = $state(existingDraft ? (existingDraft.subject === '(No subject)' ? '' : existingDraft.subject) : mailUi.composeSubject);
+	let bodyText = $state('');
 	let notice = $state('');
 	let sending = $state(false);
 	let contactsOpen = $state(false);
@@ -57,17 +64,19 @@
 	let linkInput = $state<HTMLInputElement | null>(null);
 	let attachmentInput = $state<HTMLInputElement | null>(null);
 	let imageInput = $state<HTMLInputElement | null>(null);
-	const sender = $derived(mailAccounts.find((account) => account.id === mailUi.currentAccountId)?.email ?? apiUser.value?.email ?? '');
-	const userName = $derived(apiUser.value?.name || apiUser.value?.email || '');
+	const currentAccount = $derived(mailAccounts.find((account) => account.id === mailUi.currentAccountId));
+	const sender = $derived(currentAccount?.email ?? apiUser.value?.email ?? '');
+	const senderName = $derived(currentAccount?.name || currentAccount?.email || apiUser.value?.name || apiUser.value?.email || '');
 	const recentContacts = $derived([...new Set(mailMessages.flatMap((message) => [message.address, ...(message.recipients ?? [])]))].filter((email) => email && email !== apiUser.value?.email).slice(0, 500));
 
 	$effect(() => {
 		const element = editorContainer;
 		if (!element) return;
-		const initial = untrack(() => existingDraft?.htmlBody || plainTextToHtml(mailUi.composeBody || existingDraft?.body.join('\n') || ''));
+		const initial = untrack(() => existingDraft?.htmlBody || mailUi.composeHtmlBody || plainTextToHtml(mailUi.composeBody || existingDraft?.body.join('\n') || ''));
+		const focusBodyOnOpen = untrack(() => mailUi.composeFocusBody);
 		const editor = new Editor({
 			element,
-			extensions: [StarterKit.configure({ link: { openOnClick: false, defaultProtocol: 'https', protocols: ['mailto'] } }), Image.configure({ allowBase64: true }), TableKit, TextAlign.configure({ types: ['heading', 'paragraph'] }), TextStyleKit],
+			extensions: [StarterKit.configure({ blockquote: false, link: { openOnClick: false, defaultProtocol: 'https', protocols: ['mailto'] } }), Blockquote.configure({ HTMLAttributes: { style: richBlockquoteStyle } }), Image.configure({ allowBase64: true }), TableKit, TextAlign.configure({ types: ['heading', 'paragraph'] }), TextStyleKit],
 			content: sanitizeRichHtml(initial),
 			editorProps: { attributes: { class: 'mail-rich-content mail-rich-editor min-h-full outline-none', role: 'textbox', 'aria-label': 'Message body', 'aria-multiline': 'true' } },
 			onTransaction: ({ editor }) => {
@@ -78,17 +87,31 @@
 		});
 		editorState = { editor };
 		bodyText = editor.isEmpty ? '' : editor.getText().trim() || 'Rich content';
+		let focusFrame = 0;
+		focusFrame = requestAnimationFrame(() => {
+			focusFrame = requestAnimationFrame(() => {
+				if (editor.isDestroyed || !mailUi.composeOpen) return;
+				if (focusBodyOnOpen) editor.commands.focus('start');
+				else recipientField?.focus();
+			});
+		});
 		return () => {
+			if (focusFrame) cancelAnimationFrame(focusFrame);
 			editor.destroy();
 			editorState = { editor: null };
 		};
 	});
 
 	function addRecipient(value = recipientInput) {
-		const email = value.trim().replace(/,$/, '');
-		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
-		if (!recipients.includes(email)) recipients = [...recipients, email];
+		const addresses = splitRecipientAddresses(value);
+		if (!addresses.length) return;
+		if (addresses.some((email) => !isEmailAddress(email))) {
+			notice = 'Check the recipient email address.';
+			return;
+		}
+		recipients = [...new Set([...recipients, ...addresses])];
 		recipientInput = '';
+		notice = '';
 	}
 
 	function handleRecipientKeydown(event: KeyboardEvent) {
@@ -223,9 +246,17 @@
 		return { text, html: editor && !editor.isEmpty ? sanitizeRichHtml(editor.getHTML()) : '' };
 	}
 
+	function focusEditorFromBlankArea(event: PointerEvent) {
+		if (event.target !== event.currentTarget) return;
+		editorState.editor?.commands.focus('end');
+	}
+
 	function saveDraft() {
+		const pendingRecipients = splitRecipientAddresses(recipientInput).filter(isEmailAddress);
+		const draftRecipients = [...new Set([...recipients, ...pendingRecipients])];
+		const cleanSubject = subject.trim();
 		const { text, html } = readBody();
-		if (!subject.trim() && !recipients.length && !html && !attachments.length) {
+		if (!cleanSubject && !draftRecipients.length && !html && !attachments.length) {
 			if (draftId) void deleteDrafts([draftId]);
 			hideComposer();
 			return;
@@ -234,15 +265,15 @@
 		const existing = mailMessages.find((message) => message.id === id);
 		const draft: MailMessage = {
 			id,
-			from: userName,
+			from: senderName,
 			address: sender,
-			initials: userName.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase(),
+			initials: senderName.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase(),
 			folder: 'drafts' as const,
-			subject: subject || '(No subject)',
-			preview: text.slice(0, 180) || (html ? 'Rich content' : recipients.join(', ')),
+			subject: cleanSubject || '(No subject)',
+			preview: text.slice(0, 180) || (html ? 'Rich content' : draftRecipients.join(', ')),
 			body: text ? [text] : [],
 			htmlBody: html || undefined,
-			recipients: [...recipients],
+			recipients: draftRecipients,
 			attachments: [...attachments],
 			time: 'Now',
 			date: 'Just now',
@@ -265,12 +296,21 @@
 	async function prepareMessage(event: SubmitEvent) {
 		event.preventDefault();
 		if (sending) return;
-		if (recipientInput.trim()) addRecipient();
-		if (!recipients.length) {
+		const pendingRecipients = splitRecipientAddresses(recipientInput);
+		if (pendingRecipients.some((email) => !isEmailAddress(email)) || recipients.some((email) => !isEmailAddress(email))) {
+			notice = 'Check the recipient email address.';
+			recipientField?.focus();
+			return;
+		}
+		const toRecipients = [...new Set([...recipients, ...pendingRecipients])];
+		if (!toRecipients.length) {
 			notice = 'Add at least one recipient.';
 			return;
 		}
-		if (!subject.trim()) { notice = 'Add a subject.'; return; }
+		recipients = toRecipients;
+		recipientInput = '';
+		const cleanSubject = subject.trim();
+		if (!cleanSubject) { notice = 'Add a subject.'; return; }
 		const { text, html } = readBody();
 		if (!html) { notice = 'Write a message before sending.'; return; }
 		if (!hasPermission('Send email')) { notice = 'Your role cannot send mail.'; return; }
@@ -286,11 +326,11 @@
 			}
 			await sendApiEmail({
 				accountId: mailUi.currentAccountId,
-				name: userName,
-				receiveEmail: [...recipients],
+				name: senderName,
+				receiveEmail: toRecipients,
 				text,
 				content: html,
-				subject: subject.trim(),
+				subject: cleanSubject,
 				attachments: apiAttachments
 			});
 			if (draftId) {
@@ -312,7 +352,7 @@
 	<Dialog.Root open={mailUi.composeOpen} onOpenChange={(open) => { if (!open) close(); }}>
 	<Dialog.Content showCloseButton={false} class="fixed bottom-0 left-auto right-0 top-auto flex w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden border bg-background p-0 shadow-2xl {fullscreen ? 'left-0 right-0 top-0 h-svh max-h-svh rounded-none' : 'max-h-[min(760px,100svh)] rounded-t-2xl sm:bottom-5 sm:right-5 sm:max-w-[620px] sm:rounded-xl'}">
 		<div class="flex shrink-0 items-center justify-between bg-muted/50 px-4 py-3">
-			<div><Dialog.Title id="compose-title" class="text-xs font-semibold">{draftId ? 'Edit draft' : 'New message'}</Dialog.Title><Dialog.Description class="mt-0.5 text-[9px] text-muted-foreground">From {userName} &lt;{sender}&gt;</Dialog.Description></div>
+			<div><Dialog.Title id="compose-title" class="text-xs font-semibold">{draftId ? 'Edit draft' : 'New message'}</Dialog.Title><Dialog.Description class="mt-0.5 text-[9px] text-muted-foreground">From {senderName} &lt;{sender}&gt;</Dialog.Description></div>
 			<div class="flex items-center gap-1"><Button variant="ghost" size="icon-xs" aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen composer'} onclick={() => (fullscreen = !fullscreen)}>{#if fullscreen}<Minimize2 data-icon="inline-start" />{:else}<Maximize2 data-icon="inline-start" />{/if}</Button><Button variant="ghost" size="icon-xs" aria-label="Close composer" onclick={close}><X data-icon="inline-start" /></Button></div>
 		</div>
 		<form class="flex min-h-0 flex-1 flex-col px-4" onsubmit={prepareMessage}>
@@ -321,10 +361,10 @@
 				{#each recipients as email, index (email)}
 					<span class="inline-flex max-w-[230px] items-center gap-1 rounded-full bg-secondary px-2 py-1 text-[10px]"><span class="truncate">{email}</span><button type="button" aria-label={`Remove ${email}`} onclick={() => (recipients = recipients.filter((_, itemIndex) => itemIndex !== index))}>×</button></span>
 				{/each}
-				<Input bind:ref={recipientField} bind:value={recipientInput} type="text" aria-label="Recipient email" placeholder={recipients.length ? 'Add another recipient' : 'name@example.com'} class="h-7 min-w-[150px] flex-1 border-0 px-0 text-[11px] shadow-none focus-visible:ring-0" onkeydown={handleRecipientKeydown} onblur={() => { if (recipientInput.includes('@') && recipientInput.includes('.')) addRecipient(); }} />
+				<Input bind:ref={recipientField} bind:value={recipientInput} type="text" aria-label="Recipient email" placeholder={recipients.length ? 'Add another recipient' : 'name@example.com'} class="h-7 min-w-[150px] flex-1 border-0 px-0 text-[11px] shadow-none focus-visible:ring-0" onkeydown={handleRecipientKeydown} onblur={() => { if (recipientInput.trim()) addRecipient(); }} />
 				<div class="relative"><Button type="button" variant="ghost" size="icon-xs" aria-label="Choose recent contacts" onclick={openContacts}><ContactRound data-icon="inline-start" /></Button>{#if contactsOpen}<div class="absolute right-0 top-8 z-20 w-[280px] rounded-xl border bg-popover p-2 shadow-lg"><p class="px-2 py-1 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Recent contacts</p><div class="max-h-48 overflow-y-auto">{#each recentContacts as contact (contact)}<label class="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-[10px] hover:bg-muted"><Switch checked={selectedContacts.includes(contact)} onCheckedChange={() => (selectedContacts = selectedContacts.includes(contact) ? selectedContacts.filter((item) => item !== contact) : [...selectedContacts, contact])} aria-label={`Select ${contact}`} size="sm" /><span class="min-w-0 truncate">{contact}</span></label>{:else}<p class="px-2 py-4 text-[10px] text-muted-foreground">No recent contacts yet.</p>{/each}</div><div class="mt-2 flex justify-end gap-1 border-t pt-2"><Button type="button" variant="ghost" size="xs" disabled={!selectedContacts.length} onclick={removeContacts}>Clear selected</Button><Button type="button" size="xs" onclick={applyContacts}>Choose</Button></div></div>{/if}</div>
 			</div>
-			<label class="flex items-center gap-3 border-b py-2.5 text-xs"><span class="w-7 text-[10px] text-muted-foreground">Subject</span><Input bind:value={subject} placeholder="Subject" class="h-8 border-0 px-0 text-xs shadow-none focus-visible:ring-0" /></label>
+			<label class="flex items-center gap-3 border-b py-2.5 text-xs"><span class="w-12 shrink-0 text-[10px] text-muted-foreground">Subject</span><Input bind:value={subject} type="text" aria-label="Subject" placeholder="Subject" class="h-8 min-w-0 border-0 px-0 text-xs shadow-none focus-visible:ring-0" /></label>
 			<div class="relative flex flex-wrap items-center gap-1 border-b py-2">
 				<Button type="button" variant="ghost" size="icon-sm" class={editorState.editor?.isActive('bold') ? 'bg-secondary text-secondary-foreground' : ''} aria-label="Bold" aria-pressed={editorState.editor?.isActive('bold') ?? false} onclick={() => editorState.editor?.chain().focus().toggleBold().run()}><Bold data-icon="inline-start" /></Button>
 				<Button type="button" variant="ghost" size="icon-sm" class={editorState.editor?.isActive('italic') ? 'bg-secondary text-secondary-foreground' : ''} aria-label="Italic" aria-pressed={editorState.editor?.isActive('italic') ?? false} onclick={() => editorState.editor?.chain().focus().toggleItalic().run()}><Italic data-icon="inline-start" /></Button>
@@ -356,7 +396,7 @@
 				{#if imageOpen}<div class="absolute left-0 top-full z-20 mt-2 flex w-[min(350px,calc(100vw-48px))] flex-wrap items-center gap-2 rounded-xl border bg-popover p-2 shadow-lg"><Input bind:value={imageUrl} type="url" placeholder="https://image.example/photo.png" aria-label="Image URL" class="h-8 min-w-0 flex-1 text-xs" /><Button type="button" size="xs" onclick={addImage}>Insert</Button><Button type="button" variant="outline" size="xs" onclick={() => imageInput?.click()}>Upload</Button><input bind:this={imageInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden" onchange={uploadImage} /></div>{/if}
 				{#if tableOpen}<div class="absolute left-0 top-full z-20 mt-2 flex max-w-[330px] flex-wrap gap-1 rounded-xl border bg-popover p-2 shadow-lg"><Button type="button" variant="outline" size="xs" onclick={() => { editorState.editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(); tableOpen = false; }}>Insert 3 × 3</Button><Button type="button" variant="ghost" size="xs" onclick={() => editorState.editor?.chain().focus().addRowAfter().run()}>Add row</Button><Button type="button" variant="ghost" size="xs" onclick={() => editorState.editor?.chain().focus().addColumnAfter().run()}>Add column</Button><Button type="button" variant="ghost" size="xs" onclick={() => editorState.editor?.chain().focus().deleteRow().run()}>Delete row</Button><Button type="button" variant="ghost" size="xs" onclick={() => editorState.editor?.chain().focus().deleteColumn().run()}>Delete column</Button><Button type="button" variant="ghost" size="xs" class="text-destructive" onclick={() => { editorState.editor?.chain().focus().deleteTable().run(); tableOpen = false; }}>Delete table</Button></div>{/if}
 			</div>{/if}
-			<div bind:this={editorContainer} data-empty={!bodyText} data-placeholder="Write your message…" class="mail-rich-editor-shell relative min-h-[180px] min-w-0 flex-1 overflow-y-auto py-4 text-sm leading-relaxed"></div>
+			<div bind:this={editorContainer} data-empty={!bodyText} data-placeholder="Write your message…" class="mail-rich-editor-shell relative flex min-h-[180px] min-w-0 flex-1 flex-col overflow-y-auto py-4 text-sm leading-relaxed" onpointerdown={focusEditorFromBlankArea}></div>
 			{#if attachments.length}<div class="mb-2 flex flex-wrap gap-2">{#each attachments as file, index (`${file.filename}-${index}`)}<span class="inline-flex max-w-full items-center gap-2 rounded-lg border bg-muted/30 px-2 py-1.5 text-[9px]"><span class="max-w-[190px] truncate">{file.filename}</span><span class="text-muted-foreground">{formatBytes(file.size)}</span><button type="button" aria-label={`Remove ${file.filename}`} onclick={() => removeAttachment(index)}>×</button></span>{/each}</div>{/if}
 			{#if notice}<p class="mb-2 text-[10px] text-muted-foreground" role="status">{notice}</p>{/if}
 			<input bind:this={attachmentInput} type="file" multiple class="hidden" onchange={addAttachments} />
