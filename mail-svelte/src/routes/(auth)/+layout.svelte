@@ -1,13 +1,21 @@
 <script lang="ts">
 	import { ArrowUpRight } from '@lucide/svelte';
+	import { onMount } from 'svelte';
 	import Brand from '$lib/components/mail/Brand.svelte';
 
 	let { children } = $props();
+	let appearance = $state({ title: 'Cloud Mail', background: '', projectLink: true });
+	onMount(() => {
+		try {
+			const saved = JSON.parse(localStorage.getItem('cloud-mail-system-settings-preview') || '{}') as { title?: string; loginBackground?: string; projectLink?: boolean };
+			appearance = { title: saved.title || 'Cloud Mail', background: /^https?:\/\//.test(saved.loginBackground || '') ? saved.loginBackground! : '', projectLink: saved.projectLink ?? true };
+		} catch { /* Use default appearance. */ }
+	});
 </script>
 
 <div class="grid min-h-svh bg-card lg:grid-cols-[minmax(400px,0.95fr)_1.05fr]">
-	<aside class="relative hidden flex-col justify-between overflow-hidden bg-[#e4f1f0] px-10 py-9 text-[#193c42] lg:flex xl:px-14 dark:bg-[#18343b] dark:text-foreground">
-		<Brand />
+	<aside class="relative hidden flex-col justify-between overflow-hidden bg-[#e4f1f0] px-10 py-9 text-[#193c42] lg:flex xl:px-14 dark:bg-[#18343b] dark:text-foreground" style={appearance.background ? `background-image: linear-gradient(120deg, rgb(228 241 240 / 92%), rgb(228 241 240 / 80%)), url('${appearance.background}'); background-size: cover; background-position: center;` : ''}>
+		<div><Brand /><p class="mt-2 text-xs font-medium">{appearance.title}</p></div>
 		<div class="pointer-events-none absolute -right-32 -top-20 size-[420px] rounded-full border border-[#afd4d0]/60 dark:border-[#3c686d]"></div>
 		<div class="pointer-events-none absolute -right-16 -top-4 size-[310px] rounded-full border border-[#afd4d0]/60 dark:border-[#3c686d]"></div>
 		<div class="relative max-w-[480px] pb-4">
@@ -36,7 +44,7 @@
 				<span class="text-[10px] text-[#668186] dark:text-muted-foreground">8:56</span>
 			</div>
 		</div>
-		<p class="text-[11px] text-[#668186] dark:text-muted-foreground">Cloud Mail preview</p>
+		<p class="text-[11px] text-[#668186] dark:text-muted-foreground">{appearance.title} · Local workspace</p>
 	</aside>
 
 	<main class="flex min-h-svh flex-col px-5 py-6 sm:px-10 lg:px-12">
@@ -45,7 +53,7 @@
 			<div class="w-full max-w-[400px]">{@render children()}</div>
 		</div>
 		<div class="flex items-center justify-center gap-2 text-[10px] text-muted-foreground lg:justify-end">
-			<span>Cloud Mail</span><span>·</span><span>UI preview</span><ArrowUpRight size={12} />
+			{#if appearance.projectLink}<a href="https://github.com/maillab/cloud-mail" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2 hover:underline"><span>{appearance.title}</span><span>·</span><span>Project</span><ArrowUpRight size={12} /></a>{:else}<span>{appearance.title}</span>{/if}
 		</div>
 	</main>
 </div>

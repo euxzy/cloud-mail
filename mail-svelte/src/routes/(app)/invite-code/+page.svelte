@@ -3,6 +3,7 @@
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
+	import SelectControl from '$lib/components/SelectControl.svelte';
 	import { adminRoles, inviteCodes, type InviteCode } from '$lib/admin-data.svelte.js';
 
 	let search = $state('');
@@ -41,7 +42,7 @@
 	}
 
 	function clearUnused() {
-		for (let index = inviteCodes.length - 1; index >= 0; index--) if (inviteCodes[index].uses === 0) inviteCodes.splice(index, 1);
+		for (let index = inviteCodes.length - 1; index >= 0; index--) if (!inviteCodes[index].history?.length && !history.some((entry) => entry.code === inviteCodes[index].code)) inviteCodes.splice(index, 1);
 		notice = 'Unused codes cleared from this preview.';
 	}
 </script>
@@ -72,24 +73,24 @@
 {#if showAdd}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="presentation">
 		<button class="absolute inset-0" aria-label="Close invite code form" onclick={() => (showAdd = false)}></button>
-		<section role="dialog" aria-modal="true" aria-labelledby="invite-title" class="relative z-10 w-full max-w-[440px] rounded-2xl border bg-background p-5 shadow-xl">
+		<div role="dialog" aria-modal="true" aria-labelledby="invite-title" class="relative z-10 w-full max-w-[440px] rounded-2xl border bg-background p-5 shadow-xl">
 			<div class="flex items-start justify-between"><div><h2 id="invite-title" class="text-sm font-semibold">Create invite code</h2><p class="mt-1 text-[10px] text-muted-foreground">Choose access level, expiry, and usage limit.</p></div><Button variant="ghost" size="icon-xs" aria-label="Close" onclick={() => (showAdd = false)}><X data-icon="inline-start" /></Button></div>
 			<form class="mt-4 space-y-3" onsubmit={createCode}>
 				<div class="flex gap-2"><Input bind:value={code} required placeholder="Code" class="h-9 font-mono text-xs" /><Button type="button" variant="outline" size="sm" class="shrink-0 rounded-full" onclick={generateCode}>Generate</Button></div>
-				<select bind:value={role} aria-label="Invite role" class="h-9 w-full rounded-lg border bg-background px-3 text-xs">{#each adminRoles as item}<option>{item.name}</option>{/each}</select>
+				<SelectControl bind:value={role} items={adminRoles.map((item) => ({ value: item.name, label: item.name }))} aria-label="Invite role" class="h-9 w-full text-xs" />
 				<div class="grid grid-cols-2 gap-2"><label class="space-y-1 text-[10px]">Uses<Input bind:value={uses} type="number" min="1" max="99999" class="h-9 text-xs" /></label><label class="space-y-1 text-[10px]">Expires<Input bind:value={expiry} type="date" class="h-9 text-xs" /></label></div>
 				<div class="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" size="sm" class="rounded-full" onclick={() => (showAdd = false)}>Cancel</Button><Button type="submit" size="sm" class="rounded-full">Create code</Button></div>
 			</form>
-		</section>
+		</div>
 	</div>
 {/if}
 
 {#if showHistory && selectedCode}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="presentation">
 		<button class="absolute inset-0" aria-label="Close invite history" onclick={() => (showHistory = false)}></button>
-		<section role="dialog" aria-modal="true" aria-labelledby="history-title" class="relative z-10 w-full max-w-[520px] rounded-2xl border bg-background p-5 shadow-xl">
+		<div role="dialog" aria-modal="true" aria-labelledby="history-title" class="relative z-10 w-full max-w-[520px] rounded-2xl border bg-background p-5 shadow-xl">
 			<div class="flex items-center justify-between"><div><h2 id="history-title" class="text-sm font-semibold">Usage history</h2><p class="mt-1 font-mono text-[10px] text-muted-foreground">{selectedCode.code}</p></div><Button variant="ghost" size="icon-xs" aria-label="Close" onclick={() => (showHistory = false)}><X data-icon="inline-start" /></Button></div>
-			<div class="mt-4 divide-y border-y">{#each history.filter((item) => item.code === selectedCode?.code) as item (item.email)}<div class="flex justify-between gap-3 py-3 text-[10px]"><span>{item.email}</span><span class="text-muted-foreground">{item.date}</span></div>{:else}<p class="py-8 text-center text-[10px] text-muted-foreground">No registrations have used this code yet.</p>{/each}</div>
-		</section>
+			<div class="mt-4 divide-y border-y">{#each [...history.filter((item) => item.code === selectedCode?.code), ...(selectedCode.history ?? []).map((item) => ({ ...item, code: selectedCode!.code }))] as item (`${item.email}-${item.date}`)}<div class="flex justify-between gap-3 py-3 text-[10px]"><span>{item.email}</span><span class="text-muted-foreground">{item.date}</span></div>{:else}<p class="py-8 text-center text-[10px] text-muted-foreground">No registrations have used this code yet.</p>{/each}</div>
+		</div>
 	</div>
 {/if}

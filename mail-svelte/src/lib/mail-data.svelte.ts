@@ -21,6 +21,8 @@ export type MailMessage = {
 	read: boolean;
 	starred: boolean;
 	archived: boolean;
+	deleted?: boolean;
+	ownerEmail?: string;
 	label?: string;
 };
 
@@ -29,6 +31,7 @@ export type MailAttachment = {
 	size: number;
 	contentType?: string;
 	file?: File;
+	storageId?: string;
 };
 
 export const mailMessages = $state<MailMessage[]>([

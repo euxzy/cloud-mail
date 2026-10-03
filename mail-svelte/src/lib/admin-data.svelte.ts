@@ -7,6 +7,8 @@ export type AdminUser = {
 	mailboxes: number;
 	sent: number;
 	created: string;
+	passwordSalt?: string;
+	passwordHash?: string;
 };
 
 export type AdminRole = {
@@ -18,6 +20,10 @@ export type AdminRole = {
 	default: boolean;
 	sendLimit: number;
 	mailboxLimit: number;
+	permissions?: string[];
+	sendType?: 'count' | 'day' | 'internal' | 'ban';
+	blockedSenders?: string[];
+	allowedDomains?: string[];
 };
 
 export type InviteCode = {
@@ -26,6 +32,7 @@ export type InviteCode = {
 	role: string;
 	uses: number;
 	expires: string;
+	history?: { email: string; date: string }[];
 };
 
 export const adminUsers = $state<AdminUser[]>([
@@ -38,8 +45,8 @@ export const adminUsers = $state<AdminUser[]>([
 
 export const adminRoles = $state<AdminRole[]>([
 	{ id: 1, name: 'Administrator', description: 'Full workspace access', sort: 0, users: 1, default: false, sendLimit: 0, mailboxLimit: 0 },
-	{ id: 2, name: 'Editor', description: 'Can send email and manage mailboxes', sort: 1, users: 4, default: false, sendLimit: 500, mailboxLimit: 5 },
-	{ id: 3, name: 'Member', description: 'Standard sending access', sort: 2, users: 18, default: true, sendLimit: 100, mailboxLimit: 2 }
+	{ id: 2, name: 'Editor', description: 'Can send email and manage mailboxes', sort: 1, users: 4, default: false, sendLimit: 500, mailboxLimit: 5, permissions: ['Read inbox', 'Send email', 'Delete messages', 'View starred messages', 'View mailboxes', 'Add mailbox', 'Remove mailbox'] },
+	{ id: 3, name: 'Member', description: 'Standard sending access', sort: 2, users: 18, default: true, sendLimit: 100, mailboxLimit: 2, permissions: ['Read inbox', 'Send email', 'View starred messages', 'View mailboxes'] }
 ]);
 
 export const inviteCodes = $state<InviteCode[]>([

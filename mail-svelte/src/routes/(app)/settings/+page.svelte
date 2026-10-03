@@ -3,11 +3,12 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Separator } from '$lib/components/ui/separator/index.js';
+	import { goto } from '$app/navigation';
+	import { adminUsers } from '$lib/admin-data.svelte.js';
+	import { persistPreviewData, previewSession, renamePreviewProfile, setPreviewPassword, signOutPreview } from '$lib/preview-state.svelte.js';
 
-	let name = $state('Sarah Anindya');
-	let email = $state('sarah@cloudmail.id');
 	let editName = $state(false);
-	let draftName = $state(name);
+	let draftName = $state('');
 	let passwordOpen = $state(false);
 	let deleteOpen = $state(false);
 	let newPassword = $state('');
@@ -16,19 +17,28 @@
 
 	function saveName() {
 		if (!draftName.trim()) return;
-		name = draftName.trim();
+		renamePreviewProfile(draftName.trim());
 		editName = false;
-		notice = 'Profile name saved in this preview.';
+		notice = 'Profile name saved.';
 	}
 
-	function changePassword(event: SubmitEvent) {
+	async function changePassword(event: SubmitEvent) {
 		event.preventDefault();
 		if (newPassword.length < 6) { notice = 'Use at least 6 characters for the new password.'; return; }
 		if (newPassword !== confirmPassword) { notice = 'The passwords do not match.'; return; }
+		await setPreviewPassword(previewSession.email, newPassword);
 		passwordOpen = false;
 		newPassword = '';
 		confirmPassword = '';
-		notice = 'Password change is ready to connect to the account API.';
+		notice = 'Password changed for this local account.';
+	}
+
+	async function deleteAccount() {
+		const user = adminUsers.find((item) => item.email === previewSession.email);
+		if (user) user.status = 'Deleted';
+		await persistPreviewData();
+		signOutPreview();
+		void goto('/login');
 	}
 </script>
 
@@ -47,9 +57,9 @@
 					<div><h2 class="text-sm font-semibold">Profile</h2><p class="mt-1 text-[11px] text-muted-foreground">Your identity in the Cloud Mail workspace.</p></div>
 					<Separator class="my-4" />
 					<div class="space-y-4">
-						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Display name</span><div class="flex min-w-0 items-center gap-2">{#if editName}<Input bind:value={draftName} class="h-9 max-w-[320px] text-xs" />{:else}<span class="truncate text-xs">{name}</span>{/if}{#if editName}<Button size="xs" onclick={saveName}>Save</Button><Button variant="ghost" size="xs" onclick={() => (editName = false)}>Cancel</Button>{:else}<Button variant="ghost" size="icon-xs" aria-label="Edit display name" onclick={() => { draftName = name; editName = true; }}><Pencil data-icon="inline-start" /></Button>{/if}</div></div>
-						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Email address</span><span class="truncate text-xs text-muted-foreground">{email}</span></div>
-						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Account role</span><span class="text-xs">Administrator</span></div>
+						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Display name</span><div class="flex min-w-0 items-center gap-2">{#if editName}<Input bind:value={draftName} class="h-9 max-w-[320px] text-xs" />{:else}<span class="truncate text-xs">{previewSession.name}</span>{/if}{#if editName}<Button size="xs" onclick={saveName}>Save</Button><Button variant="ghost" size="xs" onclick={() => (editName = false)}>Cancel</Button>{:else}<Button variant="ghost" size="icon-xs" aria-label="Edit display name" onclick={() => { draftName = previewSession.name; editName = true; }}><Pencil data-icon="inline-start" /></Button>{/if}</div></div>
+						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Email address</span><span class="truncate text-xs text-muted-foreground">{previewSession.email}</span></div>
+						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Account role</span><span class="text-xs">{previewSession.role}</span></div>
 					</div>
 				</section>
 
@@ -77,19 +87,19 @@
 {#if passwordOpen}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="presentation">
 		<button class="absolute inset-0" aria-label="Close password dialog" onclick={() => (passwordOpen = false)}></button>
-		<section role="dialog" aria-modal="true" aria-labelledby="password-title" class="relative z-10 w-full max-w-[390px] rounded-2xl border bg-background p-5 shadow-xl">
+		<div role="dialog" aria-modal="true" aria-labelledby="password-title" class="relative z-10 w-full max-w-[390px] rounded-2xl border bg-background p-5 shadow-xl">
 			<h2 id="password-title" class="text-sm font-semibold">Change password</h2><p class="mt-1 text-[10px] text-muted-foreground">Enter and confirm your new password.</p>
 			<form class="mt-4 space-y-3" onsubmit={changePassword}><Input bind:value={newPassword} type="password" minlength={6} required placeholder="New password" class="h-9 text-xs" /><Input bind:value={confirmPassword} type="password" minlength={6} required placeholder="Confirm new password" class="h-9 text-xs" /><div class="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" size="sm" class="rounded-full" onclick={() => (passwordOpen = false)}>Cancel</Button><Button type="submit" size="sm" class="rounded-full">Save password</Button></div></form>
-		</section>
+		</div>
 	</div>
 {/if}
 
 {#if deleteOpen}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="presentation">
 		<button class="absolute inset-0" aria-label="Close delete account dialog" onclick={() => (deleteOpen = false)}></button>
-		<section role="dialog" aria-modal="true" aria-labelledby="delete-title" class="relative z-10 w-full max-w-[400px] rounded-2xl border bg-background p-5 shadow-xl">
-			<h2 id="delete-title" class="text-sm font-semibold">Delete your account?</h2><p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Account deletion is not connected in this preview. No account data will be removed.</p>
-			<div class="mt-5 flex justify-end gap-2"><Button variant="ghost" size="sm" class="rounded-full" onclick={() => (deleteOpen = false)}>Cancel</Button><Button variant="destructive" size="sm" class="rounded-full" onclick={() => { deleteOpen = false; notice = 'Connect the account API to enable deletion.'; }}>Continue</Button></div>
-		</section>
+		<div role="dialog" aria-modal="true" aria-labelledby="delete-title" class="relative z-10 w-full max-w-[400px] rounded-2xl border bg-background p-5 shadow-xl">
+			<h2 id="delete-title" class="text-sm font-semibold">Delete your account?</h2><p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Your local account will be deactivated and signed out.</p>
+			<div class="mt-5 flex justify-end gap-2"><Button variant="ghost" size="sm" class="rounded-full" onclick={() => (deleteOpen = false)}>Cancel</Button><Button variant="destructive" size="sm" class="rounded-full" onclick={deleteAccount}>Continue</Button></div>
+		</div>
 	</div>
 {/if}

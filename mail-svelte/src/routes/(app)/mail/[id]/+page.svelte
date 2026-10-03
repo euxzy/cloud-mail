@@ -9,9 +9,10 @@
 	import { Separator } from '$lib/components/ui/separator/index.js';
 	import { mailMessages, type MailAttachment } from '$lib/mail-data.svelte.js';
 	import RichMailBody from '$lib/components/mail/RichMailBody.svelte';
-	import { showComposer } from '$lib/mail-ui.svelte.js';
+	import { mailUi, showComposer } from '$lib/mail-ui.svelte.js';
+	import { hasPreviewPermission, previewSession } from '$lib/preview-state.svelte.js';
 
-	const message = $derived(mailMessages.find((item) => item.id === page.params.id) ?? null);
+	const message = $derived(mailMessages.find((item) => item.id === page.params.id && ((item.ownerEmail ?? 'sarah@cloudmail.id') === previewSession.email || (page.url.searchParams.get('from') === 'all-mail' && hasPreviewPermission('View all mail')))) ?? null);
 	const backHref = $derived(
 		page.url.searchParams.get('from') === 'starred'
 			? '/starred'
@@ -48,8 +49,7 @@
 
 	function deleteMessage() {
 		if (!message) return;
-		const index = mailMessages.findIndex((item) => item.id === message.id);
-		if (index >= 0) mailMessages.splice(index, 1);
+		message.deleted = true;
 		deleteOpen = false;
 		goto(backHref);
 	}
@@ -97,13 +97,15 @@
 	}
 </script>
 
+<svelte:window onkeydown={(event) => { if (event.key === 'Escape' && !previewAttachment && !deleteOpen && !mailUi.composeOpen) void goto(backHref); }} />
+
 <section class="min-h-full px-3 pb-10 pt-3 sm:px-6 sm:pt-4 lg:px-8">
 	<div class="flex items-center justify-between border-b pb-2">
 		<div class="flex items-center gap-1">
 			<Button href={backHref} variant="ghost" size="icon-sm" aria-label="Back to mail list"><ArrowLeft data-icon="inline-start" /></Button>
 			{#if message}
 				<Button variant="ghost" size="icon-sm" aria-label="Archive message" onclick={archiveMessage}><Archive data-icon="inline-start" /></Button>
-				<Button variant="ghost" size="icon-sm" aria-label="Delete message" onclick={() => (deleteOpen = true)}><Trash2 data-icon="inline-start" /></Button>
+				{#if hasPreviewPermission('Delete messages')}<Button variant="ghost" size="icon-sm" aria-label="Delete message" onclick={() => (deleteOpen = true)}><Trash2 data-icon="inline-start" /></Button>{/if}
 			{/if}
 		</div>
 		{#if message}<span class="text-[10px] tabular-nums text-muted-foreground">{message.date}</span>{/if}
@@ -183,22 +185,22 @@
 {#if previewAttachment}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 p-4" role="presentation">
 		<button class="absolute inset-0" aria-label="Close attachment preview" onclick={closePreview}></button>
-		<section role="dialog" aria-modal="true" aria-labelledby="attachment-title" class="relative z-10 w-full max-w-[640px] overflow-hidden rounded-2xl border bg-background shadow-xl">
+		<div role="dialog" aria-modal="true" aria-labelledby="attachment-title" class="relative z-10 w-full max-w-[640px] overflow-hidden rounded-2xl border bg-background shadow-xl">
 			<header class="flex items-center justify-between border-b px-4 py-3"><div class="min-w-0"><h2 id="attachment-title" class="truncate text-xs font-semibold">{previewAttachment.filename}</h2><p class="mt-0.5 text-[9px] text-muted-foreground">{formatBytes(previewAttachment.size)}</p></div><Button variant="ghost" size="icon-xs" aria-label="Close preview" onclick={closePreview}><X data-icon="inline-start" /></Button></header>
 			<div class="flex min-h-[240px] max-h-[70svh] items-center justify-center overflow-auto bg-muted/20 p-4">
 				{#if previewUrl}<img src={previewUrl} alt={previewAttachment.filename} class="max-h-[62svh] max-w-full object-contain" />{:else}<div class="max-w-[300px] text-center"><FileText class="mx-auto text-muted-foreground" size={28} /><p class="mt-3 text-xs font-medium">Attachment preview</p><p class="mt-1 text-[10px] leading-relaxed text-muted-foreground">The sample includes file details only. The original file is available when connected to the mail service.</p></div>{/if}
 			</div>
 			<footer class="flex justify-end border-t p-3"><Button variant="outline" size="sm" class="rounded-full" onclick={() => downloadAttachment(previewAttachment!)}><Download data-icon="inline-start" />Download</Button></footer>
-		</section>
+		</div>
 	</div>
 {/if}
 
 {#if deleteOpen}
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="presentation">
 		<button class="absolute inset-0" aria-label="Close delete confirmation" onclick={() => (deleteOpen = false)}></button>
-		<section role="dialog" aria-modal="true" aria-labelledby="delete-message-title" class="relative z-10 w-full max-w-[380px] rounded-2xl border bg-background p-5 shadow-xl">
+		<div role="dialog" aria-modal="true" aria-labelledby="delete-message-title" class="relative z-10 w-full max-w-[380px] rounded-2xl border bg-background p-5 shadow-xl">
 			<h2 id="delete-message-title" class="text-sm font-semibold">Delete this message?</h2><p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">This message will be removed from the local preview.</p>
 			<div class="mt-5 flex justify-end gap-2"><Button variant="ghost" size="sm" class="rounded-full" onclick={() => (deleteOpen = false)}>Cancel</Button><Button variant="destructive" size="sm" class="rounded-full" onclick={deleteMessage}>Delete message</Button></div>
-		</section>
+		</div>
 	</div>
 {/if}

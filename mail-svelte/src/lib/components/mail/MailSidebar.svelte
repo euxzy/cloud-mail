@@ -8,6 +8,7 @@
 	import { mailMessages } from '$lib/mail-data.svelte.js';
 	import { mailAccounts } from '$lib/mail-accounts.svelte.js';
 	import { mailUi } from '$lib/mail-ui.svelte.js';
+	import { hasPreviewPermission, previewSession } from '$lib/preview-state.svelte.js';
 
 	type Props = {
 		class?: string;
@@ -18,30 +19,31 @@
 
 	let { class: className, onNavigate, onCompose, onAccounts }: Props = $props();
 	const folders = [
-		{ label: 'Inbox', href: '/inbox', id: 'inbox', icon: Inbox },
-		{ label: 'Starred', href: '/starred', id: 'starred', icon: Star },
-		{ label: 'Sent', href: '/sent', id: 'sent', icon: Send },
-		{ label: 'Drafts', href: '/draft', id: 'drafts', icon: FileText }
+		{ label: 'Inbox', href: '/inbox', id: 'inbox', icon: Inbox, permission: 'Read inbox' },
+		{ label: 'Starred', href: '/starred', id: 'starred', icon: Star, permission: 'View starred messages' },
+		{ label: 'Sent', href: '/sent', id: 'sent', icon: Send, permission: 'Send email' },
+		{ label: 'Drafts', href: '/draft', id: 'drafts', icon: FileText, permission: 'Send email' }
 	];
 	const management = [
-		{ label: 'Analytics', href: '/analysis', icon: ChartPie },
-		{ label: 'All mail', href: '/all-mail', icon: Mail },
-		{ label: 'Users', href: '/all-users', icon: Users },
-		{ label: 'Permissions', href: '/role', icon: ShieldCheck },
-		{ label: 'Invite codes', href: '/invite-code', icon: KeyRound },
-		{ label: 'System settings', href: '/system-settings', icon: Settings }
+		{ label: 'Analytics', href: '/analysis', icon: ChartPie, permission: 'View analytics' },
+		{ label: 'All mail', href: '/all-mail', icon: Mail, permission: 'View all mail' },
+		{ label: 'Users', href: '/all-users', icon: Users, permission: 'Manage users' },
+		{ label: 'Permissions', href: '/role', icon: ShieldCheck, permission: 'Manage roles' },
+		{ label: 'Invite codes', href: '/invite-code', icon: KeyRound, permission: 'Manage invite codes' },
+		{ label: 'System settings', href: '/system-settings', icon: Settings, permission: 'Manage system settings' }
 	];
 
 	const currentFolder = $derived(page.url.pathname === '/draft' ? 'drafts' : page.url.pathname.split('/')[1] || 'inbox');
 	const unreadCount = $derived(
-		mailMessages.filter((message) => message.folder === 'inbox' && !message.read && !message.archived).length
+		mailMessages.filter((message) => message.folder === 'inbox' && !message.deleted && !message.read && !message.archived && (message.recipients ?? []).some((email) => mailAccounts.some((account) => account.ownerEmail === previewSession.email && account.email === email))).length
 	);
-	const currentAccount = $derived(mailAccounts.find((account) => account.id === mailUi.currentAccountId) ?? mailAccounts[0]);
+	const currentAccount = $derived(mailAccounts.find((account) => account.id === mailUi.currentAccountId && account.ownerEmail === previewSession.email) ?? mailAccounts.find((account) => account.ownerEmail === previewSession.email));
 
 	function countFor(id: string) {
 		if (id === 'inbox') return unreadCount;
-		if (id === 'starred') return mailMessages.filter((message) => message.starred && !message.archived).length;
-		return mailMessages.filter((message) => message.folder === id && !message.archived).length;
+		const ownAddresses = mailAccounts.filter((account) => account.ownerEmail === previewSession.email).map((account) => account.email);
+		if (id === 'starred') return mailMessages.filter((message) => message.starred && !message.deleted && !message.archived && (ownAddresses.includes(message.address) || (message.recipients ?? []).some((email) => ownAddresses.includes(email)))).length;
+		return mailMessages.filter((message) => message.folder === id && !message.deleted && !message.archived && ownAddresses.includes(message.address)).length;
 	}
 
 	function selected(path: string) {
@@ -50,15 +52,16 @@
 </script>
 
 <aside class={cn('flex h-full min-h-0 w-[264px] shrink-0 flex-col bg-sidebar px-4 pb-4 pt-6 text-sidebar-foreground', className)}>
-	<Button class="h-11 w-full justify-start gap-3 rounded-xl px-4 text-sm font-semibold shadow-[0_7px_16px_-11px_rgba(23,107,115,0.9)]" onclick={() => { onCompose?.(); onNavigate?.(); }}>
+	{#if hasPreviewPermission('Send email')}<Button class="h-11 w-full justify-start gap-3 rounded-xl px-4 text-sm font-semibold shadow-[0_7px_16px_-11px_rgba(23,107,115,0.9)]" onclick={() => { onCompose?.(); onNavigate?.(); }}>
 		<PenLine data-icon="inline-start" />
 		Compose
-	</Button>
+	</Button>{/if}
 
 	<div class="mt-8 min-h-0 flex-1 overflow-y-auto">
 		<div class="px-3 pb-2 text-[11px] font-semibold tracking-[0.02em] text-muted-foreground">Your mail</div>
 		<nav aria-label="Mail folders" class="flex flex-col gap-1">
 			{#each folders as folder (folder.id)}
+				{#if hasPreviewPermission(folder.permission)}
 				{@const Icon = folder.icon}
 				<Button
 					href={folder.href}
@@ -72,17 +75,19 @@
 					<span>{folder.label}</span>
 					{#if countFor(folder.id) > 0}<span class="ml-auto rounded-md bg-background/80 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums">{countFor(folder.id)}</span>{/if}
 				</Button>
+				{/if}
 			{/each}
 		</nav>
 
-		<Button variant="ghost" class="mt-1 h-10 w-full justify-start gap-3 rounded-xl px-3 text-[13px] font-medium hover:bg-sidebar-accent/60" onclick={() => { onAccounts?.(); onNavigate?.(); }}>
+		{#if hasPreviewPermission('View mailboxes')}<Button variant="ghost" class="mt-1 h-10 w-full justify-start gap-3 rounded-xl px-3 text-[13px] font-medium hover:bg-sidebar-accent/60" onclick={() => { onAccounts?.(); onNavigate?.(); }}>
 			<Users data-icon="inline-start" /><span>Mailboxes</span>
-		</Button>
+		</Button>{/if}
 
 		<Separator class="my-5" />
 		<div class="px-3 pb-2 text-[11px] font-semibold tracking-[0.02em] text-muted-foreground">Workspace</div>
 		<nav aria-label="Management" class="flex flex-col gap-1">
 			{#each management as item (item.href)}
+				{#if hasPreviewPermission(item.permission)}
 				{@const Icon = item.icon}
 				<Button
 					href={item.href}
@@ -94,6 +99,7 @@
 				>
 					<Icon data-icon="inline-start" /><span>{item.label}</span>
 				</Button>
+				{/if}
 			{/each}
 		</nav>
 
@@ -106,9 +112,9 @@
 	<div class="mt-3 shrink-0">
 		<Separator class="mb-3" />
 		<a href="/settings" class="flex items-center gap-2.5 rounded-xl px-2 py-2 hover:bg-sidebar-accent/60" onclick={onNavigate}>
-			<Avatar.Root size="sm"><Avatar.Fallback class="bg-secondary text-[10px] font-semibold text-secondary-foreground">SA</Avatar.Fallback></Avatar.Root>
+			<Avatar.Root size="sm"><Avatar.Fallback class="bg-secondary text-[10px] font-semibold text-secondary-foreground">{previewSession.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase() || 'CM'}</Avatar.Fallback></Avatar.Root>
 			<span class="min-w-0 flex-1">
-				<span class="block truncate text-[11px] font-semibold">{currentAccount?.primary ? 'Sarah Anindya' : 'Mailbox account'}</span>
+				<span class="block truncate text-[11px] font-semibold">{currentAccount?.name || previewSession.name}</span>
 				<span class="block truncate text-[10px] text-muted-foreground">{currentAccount?.email}</span>
 			</span>
 		</a>
