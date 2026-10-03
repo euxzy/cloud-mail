@@ -1,14 +1,17 @@
 <script lang="ts">
-	import { ArrowDown, ArrowUp, Filter, RefreshCw, Search, Trash2, X } from '@lucide/svelte';
+	import { ArrowDown, ArrowUp, Filter, LoaderCircle, RefreshCw, Search, Trash2, X } from '@lucide/svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import SelectControl from '$lib/components/SelectControl.svelte';
+	import LoadingState from '$lib/components/LoadingState.svelte';
 	import { mailMessages } from '$lib/mail-data.svelte.js';
 	import { fetchApiAllMessages } from '$lib/api/mail.js';
 	import { batchDeleteAllEmail, deleteAllEmail } from '$lib/api/admin.js';
 	import { hasPermission } from '$lib/permissions.svelte.js';
+	import { toast } from 'svelte-sonner';
 
 	type MailScope = 'all' | 'received' | 'sent' | 'deleted' | 'no-recipient';
 	let scope = $state<MailScope>('all');
@@ -16,7 +19,9 @@
 	let query = $state('');
 	let newestFirst = $state(true);
 	let selectedIds = $state<string[]>([]);
+	let confirmSelectedDeleteOpen = $state(false);
 	let showCleanup = $state(false);
+	let cleanupReview = $state(false);
 	let cleanupSender = $state('');
 	let cleanupSubject = $state('');
 	let cleanupMailbox = $state('');
@@ -24,8 +29,9 @@
 	let cleanupStart = $state('');
 	let cleanupEnd = $state('');
 	let cleanupMatch = $state('contains');
-	let cleanupNotice = $state('');
-	let loading = $state(false);
+	let loading = $state(true);
+	let deletingSelected = $state(false);
+	let cleaning = $state(false);
 	let page = $state(1);
 	let pageCursors = $state<number[]>([0]);
 	let hasMore = $state(false);
@@ -113,29 +119,42 @@
 		selectedIds = [];
 		void loadMessages(targetPage, cursor, currentFilters());
 	}
+	function requestDeleteSelected() {
+		if (!canDeleteAllEmail || !selectedIds.length || deletingSelected) return;
+		confirmSelectedDeleteOpen = true;
+	}
 	async function deleteSelected() {
-		if (!canDeleteAllEmail || !selectedIds.length) return;
-		try { await deleteAllEmail(selectedIds); const ids = new Set(selectedIds); mailMessages.splice(0, mailMessages.length, ...mailMessages.filter((message) => !ids.has(message.id))); total = Math.max(0, total - ids.size); selectedIds = []; statusNotice = 'Selected messages permanently deleted.'; }
-		catch (error) { statusNotice = error instanceof Error ? error.message : 'Messages could not be deleted.'; }
+		if (!canDeleteAllEmail || !selectedIds.length || deletingSelected) return;
+		const idsToDelete = [...selectedIds];
+		deletingSelected = true;
+		try { await deleteAllEmail(idsToDelete); const ids = new Set(idsToDelete); mailMessages.splice(0, mailMessages.length, ...mailMessages.filter((message) => !ids.has(message.id))); total = Math.max(0, total - ids.size); selectedIds = []; confirmSelectedDeleteOpen = false; toast.success('Selected messages permanently deleted.'); }
+		catch (error) { toast.error(error instanceof Error ? error.message : 'Messages could not be deleted.'); }
+		finally { deletingSelected = false; }
 	}
 	function statusLabel(message: (typeof mailMessages)[number], deleted: boolean) {
 		if (deleted) return 'Deleted';
 		return ({ sent: 'Sent', delivered: 'Delivered', bounced: 'Bounced', complained: 'Complaint', delayed: 'Delayed', failed: 'Failed', 'no-recipient': 'No recipient' } as const)[message.status ?? 'delivered'];
 	}
-	async function applyCleanup(event: SubmitEvent) {
+	function applyCleanup(event: SubmitEvent) {
 		event.preventDefault();
 		if (!canDeleteAllEmail) return;
 		const hasCriteria = [cleanupSender, cleanupSubject, cleanupMailbox, cleanupRecipient, cleanupStart, cleanupEnd].some((value) => value.trim());
-		if (!hasCriteria) { cleanupNotice = 'Add at least one filter before bulk cleanup.'; showCleanup = false; return; }
+		if (!hasCriteria) { toast.warning('Add at least one filter before bulk cleanup.'); return; }
+		cleanupReview = true;
+	}
+	async function confirmCleanup() {
+		if (!canDeleteAllEmail || cleaning) return;
 		const type = cleanupMatch === 'equals' ? 'eq' : cleanupMatch === 'starts-with' ? 'left' : 'include';
+		cleaning = true;
 		try {
 			await batchDeleteAllEmail({
 				sendName: cleanupSender.trim(), subject: cleanupSubject.trim(), sendEmail: cleanupMailbox.trim(), toEmail: cleanupRecipient.trim(),
 				startTime: cleanupStart || cleanupEnd ? `${cleanupStart || cleanupEnd} 00:00:00` : undefined,
 				endTime: cleanupEnd || cleanupStart ? `${cleanupEnd || cleanupStart} 23:59:59` : undefined, type
 			});
-			cleanupNotice = 'Matching messages permanently deleted.'; showCleanup = false; refreshKey += 1;
-		} catch (error) { cleanupNotice = error instanceof Error ? error.message : 'Bulk cleanup failed.'; }
+			toast.success('Matching messages permanently deleted.'); showCleanup = false; cleanupReview = false; refreshKey += 1;
+		} catch (error) { toast.error(error instanceof Error ? error.message : 'Bulk cleanup failed.'); }
+		finally { cleaning = false; }
 	}
 </script>
 
@@ -143,7 +162,7 @@
 	<div class="mx-auto max-w-[1360px]">
 		<div class="flex flex-wrap items-end justify-between gap-4">
 			<div><h1 class="text-[27px] font-semibold tracking-[-0.055em] sm:text-[30px]">All mail</h1><p class="mt-1 text-[13px] text-muted-foreground">Search and manage messages across every mailbox.</p></div>
-			<div class="flex items-center gap-2"><Badge variant="outline" class="h-5 rounded-full px-2 text-[9px]">Admin view</Badge>{#if canDeleteAllEmail}<Button variant="outline" size="sm" class="rounded-full" onclick={() => (showCleanup = true)}><Filter data-icon="inline-start" />Bulk cleanup</Button>{/if}</div>
+			<div class="flex items-center gap-2"><Badge variant="outline" class="h-5 rounded-full px-2 text-[9px]">Admin view</Badge>{#if canDeleteAllEmail}<Button variant="outline" size="sm" class="rounded-full" onclick={() => { cleanupReview = false; showCleanup = true; }}><Filter data-icon="inline-start" />Bulk cleanup</Button>{/if}</div>
 		</div>
 
 		<div class="mt-5 flex flex-col gap-3 rounded-xl border p-3 sm:flex-row sm:items-center">
@@ -154,13 +173,13 @@
 			<div class="flex items-center gap-2">
 				<SelectControl bind:value={scope} items={[{ value: 'all', label: 'All messages' }, { value: 'received', label: 'Received' }, { value: 'sent', label: 'Sent' }, { value: 'deleted', label: 'Deleted' }, { value: 'no-recipient', label: 'No recipient' }]} aria-label="Message scope" class="h-9 min-w-0 flex-1 text-[10px] sm:flex-none" />
 				<Button variant="ghost" size="icon-sm" aria-label="Reverse sort order" onclick={() => (newestFirst = !newestFirst)}>{#if newestFirst}<ArrowDown data-icon="inline-start" />{:else}<ArrowUp data-icon="inline-start" />{/if}</Button>
-				<Button variant="ghost" size="icon-sm" aria-label="Refresh list" onclick={() => { query = ''; refreshKey += 1; }}><RefreshCw data-icon="inline-start" /></Button>
+				<Button variant="ghost" size="icon-sm" aria-label="Refresh list" disabled={loading} onclick={() => { query = ''; refreshKey += 1; }}>{#if loading}<LoaderCircle class="animate-spin" data-icon="inline-start" />{:else}<RefreshCw data-icon="inline-start" />{/if}</Button>
 			</div>
 		</div>
 
 		<div class="mt-3 flex items-center justify-between gap-3 px-1 text-[10px] text-muted-foreground">
 			<div class="flex items-center gap-2"><Checkbox checked={allSelected} indeterminate={someSelected} onCheckedChange={selectAll} aria-label="Select all messages on this page" /><span>Select all on this page</span></div>
-			<div class="flex items-center gap-3"><span>{scopedMessages.length} messages on this page</span>{#if selectedIds.length && canDeleteAllEmail}<Button variant="ghost" size="xs" class="text-destructive" onclick={deleteSelected}><Trash2 data-icon="inline-start" />Delete {selectedIds.length}</Button>{/if}</div>
+			<div class="flex items-center gap-3"><span>{scopedMessages.length} messages on this page</span>{#if selectedIds.length && canDeleteAllEmail}<Button variant="ghost" size="xs" class="text-destructive" disabled={deletingSelected} onclick={requestDeleteSelected}><Trash2 data-icon="inline-start" />Delete {selectedIds.length}</Button>{/if}</div>
 		</div>
 
 		<div class="mt-2 overflow-x-auto rounded-xl border">
@@ -177,12 +196,12 @@
 							<td class="px-3 py-3 text-right text-[9px] tabular-nums text-muted-foreground">{message.date}</td>
 						</tr>
 					{:else}
-						<tr><td colspan="6" class="px-4 py-14 text-center text-xs text-muted-foreground">{loading ? 'Loading messages…' : 'No messages match these filters.'}</td></tr>
+						<tr><td colspan="6" class="px-4 py-14 text-center text-xs text-muted-foreground">{#if loading}<div class="flex justify-center"><LoadingState label="Loading messages…" /></div>{:else}No messages match these filters.{/if}</td></tr>
 					{/each}
 				</tbody>
 			</table>
 		</div>
-		{#if loading}<p class="mt-3 text-[10px] text-muted-foreground" role="status">Loading messages…</p>{/if}{#if statusNotice}<p class="mt-3 text-[10px] text-muted-foreground" role="status">{statusNotice}</p>{/if}{#if cleanupNotice}<p class="mt-3 text-[10px] text-muted-foreground" role="status">{cleanupNotice}</p>{/if}
+		{#if statusNotice}<p class="mt-3 text-[10px] text-destructive" role="alert">{statusNotice}</p>{/if}
 		{#if page > 1 || hasMore}
 			<div class="mt-3 flex items-center justify-between gap-3">
 				<Button variant="outline" size="sm" disabled={page <= 1 || loading} onclick={previousPage}>Previous</Button>
@@ -194,18 +213,44 @@
 </section>
 
 {#if showCleanup && canDeleteAllEmail}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="presentation">
-		<button class="absolute inset-0" aria-label="Close bulk cleanup" onclick={() => (showCleanup = false)}></button>
-		<div role="dialog" aria-modal="true" aria-labelledby="cleanup-title" class="relative z-10 w-full max-w-[440px] rounded-2xl border bg-background p-5 shadow-xl">
-			<div class="flex items-start justify-between"><div><h2 id="cleanup-title" class="text-sm font-semibold">Bulk cleanup</h2><p class="mt-1 text-[10px] text-muted-foreground">Delete messages matching all entered filters.</p></div><Button variant="ghost" size="icon-xs" aria-label="Close" onclick={() => (showCleanup = false)}><X data-icon="inline-start" /></Button></div>
+	<Dialog.Root bind:open={showCleanup}>
+		<Dialog.Content showCloseButton={false} class="w-[calc(100vw-2rem)] max-w-[440px] gap-0 p-5">
+			<Dialog.Header class="flex-row items-start justify-between">
+				<div><Dialog.Title id="cleanup-title" class="text-sm font-semibold">{cleanupReview ? 'Confirm bulk cleanup' : 'Bulk cleanup'}</Dialog.Title><Dialog.Description class="mt-1 text-[10px] text-muted-foreground">{cleanupReview ? 'This permanently deletes every message matching the filters you entered. This action cannot be undone.' : 'Set filters for the messages you want to delete.'}</Dialog.Description></div>
+				<Button variant="ghost" size="icon-xs" aria-label="Close" disabled={cleaning} onclick={() => { showCleanup = false; cleanupReview = false; }}><X data-icon="inline-start" /></Button>
+			</Dialog.Header>
+			{#if cleanupReview}
+				<div class="mt-4 rounded-lg border bg-muted/30 p-3 text-[10px] leading-relaxed">
+					<p class="mb-2 font-medium">Delete messages matching:</p>
+					<div class="flex flex-col gap-1 text-muted-foreground">
+						{#if cleanupSender.trim()}<p>Sender name: {cleanupSender}</p>{/if}
+						{#if cleanupSubject.trim()}<p>Subject: {cleanupSubject}</p>{/if}
+						{#if cleanupMailbox.trim()}<p>Sender address: {cleanupMailbox}</p>{/if}
+						{#if cleanupRecipient.trim()}<p>Recipient address: {cleanupRecipient}</p>{/if}
+						{#if cleanupStart || cleanupEnd}<p>Date: {cleanupStart || 'Any'} through {cleanupEnd || 'Any'}</p>{/if}
+						<p>Text matching: {cleanupMatch}</p>
+					</div>
+				</div>
+				<div class="mt-5 flex justify-end gap-2"><Button type="button" variant="ghost" size="sm" class="rounded-full" disabled={cleaning} onclick={() => (cleanupReview = false)}>Back</Button><Button type="button" variant="destructive" size="sm" class="rounded-full" disabled={cleaning} onclick={() => { void confirmCleanup(); }}>{#if cleaning}<LoaderCircle class="animate-spin" data-icon="inline-start" />{/if}{cleaning ? 'Deleting…' : 'Permanently delete'}</Button></div>
+			{:else}
 			<form class="mt-4 space-y-2.5" onsubmit={applyCleanup}>
 				<Input bind:value={cleanupSender} placeholder="Sender name prefix" class="h-9 text-xs" />
 				<Input bind:value={cleanupSubject} placeholder="Subject contains" class="h-9 text-xs" />
 				<Input bind:value={cleanupMailbox} placeholder="Sender address" class="h-9 text-xs" />
 				<Input bind:value={cleanupRecipient} placeholder="Recipient address" class="h-9 text-xs" />
 				<div class="grid grid-cols-2 gap-2"><label class="space-y-1 text-[10px]">From date<Input bind:value={cleanupStart} type="date" class="h-9 text-xs" /></label><label class="space-y-1 text-[10px]">To date<Input bind:value={cleanupEnd} type="date" class="h-9 text-xs" /></label></div>
-				<div class="flex items-center justify-between gap-3 pt-2"><SelectControl bind:value={cleanupMatch} items={[{ value: 'equals', label: 'Exact match' }, { value: 'starts-with', label: 'Starts with' }, { value: 'contains', label: 'Contains' }]} aria-label="Text matching rule" class="h-9 text-[10px]" /><div class="flex justify-end gap-2"><Button type="button" variant="ghost" size="sm" class="rounded-full" onclick={() => (showCleanup = false)}>Cancel</Button><Button type="submit" size="sm" class="rounded-full">Delete matches</Button></div></div>
+				<div class="flex items-center justify-between gap-3 pt-2"><SelectControl bind:value={cleanupMatch} items={[{ value: 'equals', label: 'Exact match' }, { value: 'starts-with', label: 'Starts with' }, { value: 'contains', label: 'Contains' }]} aria-label="Text matching rule" class="h-9 text-[10px]" /><div class="flex justify-end gap-2"><Button type="button" variant="ghost" size="sm" class="rounded-full" onclick={() => (showCleanup = false)}>Cancel</Button><Button type="submit" size="sm" class="rounded-full">Review matches</Button></div></div>
 			</form>
-		</div>
-	</div>
+			{/if}
+		</Dialog.Content>
+	</Dialog.Root>
+{/if}
+
+{#if confirmSelectedDeleteOpen}
+	<Dialog.Root bind:open={confirmSelectedDeleteOpen}>
+		<Dialog.Content showCloseButton={false} class="w-[calc(100vw-2rem)] max-w-[400px] gap-0 p-5">
+			<Dialog.Header><Dialog.Title class="text-sm font-semibold">Permanently delete {selectedIds.length} messages?</Dialog.Title><Dialog.Description class="mt-1 text-[11px] leading-relaxed">The selected messages will be permanently deleted from all mailboxes. This action cannot be undone.</Dialog.Description></Dialog.Header>
+			<div class="mt-5 flex justify-end gap-2"><Button variant="ghost" size="sm" class="rounded-full" disabled={deletingSelected} onclick={() => (confirmSelectedDeleteOpen = false)}>Cancel</Button><Button variant="destructive" size="sm" class="rounded-full" disabled={deletingSelected} onclick={() => { void deleteSelected(); }}>{#if deletingSelected}<LoaderCircle class="animate-spin" data-icon="inline-start" />{/if}{deletingSelected ? 'Deleting…' : 'Permanently delete'}</Button></div>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}

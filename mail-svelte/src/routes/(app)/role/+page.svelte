@@ -1,14 +1,17 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { MoreHorizontal, Plus, RefreshCw, ShieldCheck, Star, Trash2 } from '@lucide/svelte';
+	import { LoaderCircle, Plus, RefreshCw, ShieldCheck, Star, Trash2, X } from '@lucide/svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import SelectControl from '$lib/components/SelectControl.svelte';
+	import LoadingState from '$lib/components/LoadingState.svelte';
 	import { Switch } from '$lib/components/ui/switch/index.js';
 	import { adminRoles, type AdminRole } from '$lib/admin-data.svelte.js';
 	import { createRole, fetchPermissionTree, fetchRoles, removeRole as deleteApiRole, setDefaultRole, updateRole, type ApiPermission, type ApiRole } from '$lib/api/admin.js';
 	import { hasPermission } from '$lib/permissions.svelte.js';
+	import { toast } from 'svelte-sonner';
 
 	let permissionGroups = $state<Array<{ name: string; items: ApiPermission[] }>>([]);
 	let showForm = $state(false);
@@ -24,6 +27,9 @@
 	let allowedDomains = $state('');
 	let permIds = $state<number[]>([]);
 	let notice = $state('');
+	let loadingRoles = $state(true);
+	let savingRole = $state(false);
+	let updatingRoleId = $state<number | null>(null);
 	const canAddRole = $derived(hasPermission('role:add'));
 	const canSetRole = $derived(hasPermission('role:set'));
 	const canDeleteRole = $derived(hasPermission('role:delete'));
@@ -31,12 +37,14 @@
 	onMount(() => { void refreshRoles(); });
 
 	async function refreshRoles() {
+		loadingRoles = true;
 		try {
 			const [roles, tree] = await Promise.all([fetchRoles(), fetchPermissionTree()]);
 			permissionGroups = (tree ?? []).map((group) => ({ name: group.name, items: group.children ?? [] }));
 			adminRoles.splice(0, adminRoles.length, ...(roles ?? []).map((role): AdminRole => mapRole(role)));
 			notice = '';
 		} catch (error) { notice = error instanceof Error ? error.message : 'Roles could not be loaded.'; }
+		finally { loadingRoles = false; }
 	}
 
 	function mapRole(role: ApiRole): AdminRole {
@@ -71,7 +79,8 @@
 	async function saveRole(event: SubmitEvent) {
 		event.preventDefault();
 		if (editingId !== null ? !canSetRole : !canAddRole) return;
-		if (!roleName.trim()) return;
+		if (!roleName.trim() || savingRole) return;
+		savingRole = true;
 		try {
 			if (editingId !== null) await updateRole({ ...formValue(), roleId: editingId });
 			else await createRole(formValue());
@@ -80,18 +89,23 @@
 			if (roleDefault && saved) await setDefaultRole(saved.id);
 			showForm = false;
 			await refreshRoles();
-			notice = 'Role saved.';
-		} catch (error) { notice = error instanceof Error ? error.message : 'Role could not be saved.'; }
+			toast.success('Role saved.');
+		} catch (error) { toast.error(error instanceof Error ? error.message : 'Role could not be saved.'); }
+		finally { savingRole = false; }
 	}
 	async function setDefault(role: AdminRole) {
-		if (!canSetRole) return;
-		try { await setDefaultRole(role.id); await refreshRoles(); notice = `${role.name} is now the default role.`; }
-		catch (error) { notice = error instanceof Error ? error.message : 'Default role could not be changed.'; }
+		if (!canSetRole || updatingRoleId !== null) return;
+		updatingRoleId = role.id;
+		try { await setDefaultRole(role.id); await refreshRoles(); toast.success(`${role.name} is now the default role.`); }
+		catch (error) { toast.error(error instanceof Error ? error.message : 'Default role could not be changed.'); }
+		finally { updatingRoleId = null; }
 	}
 	async function deleteRole(role: AdminRole) {
-		if (!canDeleteRole) return;
-		try { await deleteApiRole(role.id); await refreshRoles(); notice = 'Role deleted. Users assigned to it were moved to the default role.'; }
-		catch (error) { notice = error instanceof Error ? error.message : 'Role could not be deleted.'; }
+		if (!canDeleteRole || updatingRoleId !== null) return;
+		updatingRoleId = role.id;
+		try { await deleteApiRole(role.id); await refreshRoles(); toast.success('Role deleted. Users assigned to it were moved to the default role.'); }
+		catch (error) { toast.error(error instanceof Error ? error.message : 'Role could not be deleted.'); }
+		finally { updatingRoleId = null; }
 	}
 </script>
 
@@ -99,7 +113,7 @@
 	<div class="mx-auto max-w-[1180px]">
 		<div class="flex flex-wrap items-end justify-between gap-4">
 			<div><h1 class="text-[27px] font-semibold tracking-[-0.055em] sm:text-[30px]">Permissions</h1><p class="mt-1 text-[13px] text-muted-foreground">Define what each role can access and send.</p></div>
-			<div class="flex flex-wrap gap-2"><Button variant="outline" size="sm" class="rounded-full" onclick={() => { void refreshRoles(); }}><RefreshCw data-icon="inline-start" />Refresh</Button>{#if canAddRole}<Button size="sm" class="rounded-full" onclick={openNew}><Plus data-icon="inline-start" />Create role</Button>{/if}</div>
+			<div class="flex flex-wrap gap-2"><Button variant="outline" size="sm" class="rounded-full" disabled={loadingRoles} onclick={() => { void refreshRoles(); }}>{#if loadingRoles}<LoaderCircle class="animate-spin" data-icon="inline-start" />{:else}<RefreshCw data-icon="inline-start" />{/if}Refresh</Button>{#if canAddRole}<Button size="sm" class="rounded-full" disabled={savingRole} onclick={openNew}><Plus data-icon="inline-start" />Create role</Button>{/if}</div>
 		</div>
 
 		<div class="mt-5 overflow-x-auto rounded-xl border">
@@ -113,22 +127,22 @@
 							<td class="max-w-[270px] truncate px-4 py-3 text-muted-foreground">{role.description}</td>
 							<td class="px-4 py-3">{role.sendLimit ? role.sendLimit.toLocaleString() : 'Unlimited'}</td>
 							<td class="px-4 py-3">{role.mailboxLimit ? role.mailboxLimit : 'Unlimited'}</td>
-							<td class="px-4 py-3 text-right"><div class="inline-flex gap-1">{#if canSetRole}<Button variant="ghost" size="xs" onclick={() => openEdit(role)}>Edit</Button><Button variant="ghost" size="xs" onclick={() => setDefault(role)}><Star data-icon="inline-start" />Set default</Button>{/if}{#if canDeleteRole}<Button variant="ghost" size="icon-xs" aria-label="Delete role" onclick={() => deleteRole(role)}><Trash2 data-icon="inline-start" /></Button>{/if}</div></td>
+							<td class="px-4 py-3 text-right"><div class="inline-flex gap-1">{#if canSetRole}<Button variant="ghost" size="xs" disabled={loadingRoles || updatingRoleId !== null || savingRole} onclick={() => openEdit(role)}>Edit</Button><Button variant="ghost" size="xs" disabled={loadingRoles || updatingRoleId !== null || savingRole} onclick={() => setDefault(role)}>{#if updatingRoleId === role.id}<LoaderCircle class="animate-spin" data-icon="inline-start" />{:else}<Star data-icon="inline-start" />{/if}Set default</Button>{/if}{#if canDeleteRole}<Button variant="ghost" size="icon-xs" aria-label="Delete role" disabled={loadingRoles || updatingRoleId !== null || savingRole} onclick={() => deleteRole(role)}>{#if updatingRoleId === role.id}<LoaderCircle class="animate-spin" data-icon="inline-start" />{:else}<Trash2 data-icon="inline-start" />{/if}</Button>{/if}</div></td>
 						</tr>
+					{:else}<tr><td colspan="6" class="px-4 py-12 text-center text-xs text-muted-foreground">{#if loadingRoles}<div class="flex justify-center"><LoadingState label="Loading roles and permissions…" /></div>{:else}No roles are configured.{/if}</td></tr>
 					{/each}
 				</tbody>
 			</table>
 		</div>
-		{#if notice}<p class="mt-3 text-[10px] text-muted-foreground" role="status">{notice}</p>{/if}
+		{#if notice}<p class="mt-3 text-[10px] text-destructive" role="alert">{notice}</p>{/if}
 		<div class="mt-4 rounded-xl border border-dashed p-4"><p class="text-[10px] font-medium">Role controls</p><p class="mt-1 text-[10px] leading-relaxed text-muted-foreground">Roles can limit daily sending, mailbox creation, domain access, and administrative screens. Changes here apply to users assigned to the role.</p></div>
 	</div>
 </section>
 
 {#if showForm && (editingId === null ? canAddRole : canSetRole)}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="presentation">
-		<button class="absolute inset-0" aria-label="Close role editor" onclick={() => (showForm = false)}></button>
-		<div role="dialog" aria-modal="true" aria-labelledby="role-editor-title" class="relative z-10 max-h-[90svh] w-full max-w-[640px] overflow-y-auto rounded-2xl border bg-background p-5 shadow-xl">
-			<div class="flex items-center justify-between"><div><h2 id="role-editor-title" class="text-sm font-semibold">{editingId ? 'Edit role' : 'Create role'}</h2><p class="mt-1 text-[10px] text-muted-foreground">Set access, quotas, and domain restrictions.</p></div><MoreHorizontal size={17} class="text-muted-foreground" /></div>
+	<Dialog.Root bind:open={showForm}>
+		<Dialog.Content showCloseButton={false} class="w-[calc(100vw-2rem)] max-h-[90svh] max-w-[640px] gap-0 overflow-y-auto p-5">
+			<Dialog.Header class="flex-row items-center justify-between"><div><Dialog.Title id="role-editor-title" class="text-sm font-semibold">{editingId ? 'Edit role' : 'Create role'}</Dialog.Title><Dialog.Description class="mt-1 text-[10px] text-muted-foreground">Set access, quotas, and domain restrictions.</Dialog.Description></div><Button variant="ghost" size="icon-xs" aria-label="Close role editor" onclick={() => (showForm = false)}><X data-icon="inline-start" /></Button></Dialog.Header>
 			<form class="mt-4 space-y-4" onsubmit={saveRole}>
 				<div class="grid gap-3 sm:grid-cols-3"><label class="space-y-1 text-[10px] font-medium"><span>Role name</span><Input bind:value={roleName} required maxlength={24} class="h-9 text-xs" /></label><label class="space-y-1 text-[10px] font-medium"><span>Description</span><Input bind:value={description} maxlength={80} class="h-9 text-xs" /></label><label class="space-y-1 text-[10px] font-medium"><span>Order</span><Input bind:value={roleSort} type="number" min="0" max="9999" class="h-9 text-xs" /></label></div>
 				<div class="grid gap-3 sm:grid-cols-2"><label class="space-y-1 text-[10px] font-medium"><span>Send limit (0 = unlimited)</span><Input bind:value={sendLimit} type="number" min={0} class="h-9 text-xs" /></label><label class="space-y-1 text-[10px] font-medium"><span>Mailbox limit (0 = unlimited)</span><Input bind:value={mailboxLimit} type="number" min={0} class="h-9 text-xs" /></label></div>
@@ -136,8 +150,8 @@
 				<div class="grid gap-3 sm:grid-cols-2"><label class="space-y-1 text-[10px] font-medium"><span>Blocked sender addresses (one per line)</span><textarea bind:value={blockedSenders} rows="3" class="w-full rounded-lg border bg-background p-2 text-xs"></textarea></label><label class="space-y-1 text-[10px] font-medium"><span>Allowed mailbox domains (one per line)</span><textarea bind:value={allowedDomains} rows="3" class="w-full rounded-lg border bg-background p-2 text-xs"></textarea></label></div>
 				<label class="flex items-center gap-2 text-[10px]"><Switch bind:checked={roleDefault} size="sm" />Make this the default role for new users</label>
 				<div class="rounded-xl border p-3"><p class="text-[10px] font-semibold">Access permissions</p><div class="mt-3 grid gap-4 sm:grid-cols-3">{#each permissionGroups as group (group.name)}<fieldset><legend class="mb-2 text-[9px] font-medium text-muted-foreground">{group.name}</legend><div class="space-y-2">{#each group.items as permission (permission.permId)}<label class="flex items-center gap-2 text-[9px]"><Switch checked={permIds.includes(permission.permId)} onCheckedChange={() => togglePermission(permission.permId)} size="sm" />{permission.name}</label>{/each}</div></fieldset>{/each}</div></div>
-				<div class="flex justify-end gap-2"><Button type="button" variant="ghost" size="sm" class="rounded-full" onclick={() => (showForm = false)}>Cancel</Button><Button type="submit" size="sm" class="rounded-full">Save role</Button></div>
+				<div class="flex justify-end gap-2"><Button type="button" variant="ghost" size="sm" class="rounded-full" disabled={savingRole} onclick={() => (showForm = false)}>Cancel</Button><Button type="submit" size="sm" class="rounded-full" disabled={savingRole}>{#if savingRole}<LoaderCircle class="animate-spin" data-icon="inline-start" />{/if}{savingRole ? 'Saving…' : 'Save role'}</Button></div>
 			</form>
-		</div>
-	</div>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}

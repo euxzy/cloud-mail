@@ -1,12 +1,14 @@
 <script lang="ts">
-	import { Check, KeyRound, Languages, Pencil, ShieldAlert, UserRound } from '@lucide/svelte';
+	import { KeyRound, Languages, LoaderCircle, Pencil, ShieldAlert, UserRound } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Separator } from '$lib/components/ui/separator/index.js';
 	import { goto } from '$app/navigation';
 	import { apiRequest } from '$lib/api/client.js';
 	import { apiRoleName, apiUser, clearApiSession, fetchApiUser } from '$lib/api/session.svelte.js';
 	import { renameApiAccount } from '$lib/api/mail.js';
+	import { toast } from 'svelte-sonner';
 
 	let editName = $state(false);
 	let draftName = $state('');
@@ -14,37 +16,48 @@
 	let deleteOpen = $state(false);
 	let newPassword = $state('');
 	let confirmPassword = $state('');
-	let notice = $state('');
+	let savingName = $state(false);
+	let changingPassword = $state(false);
+	let deletingAccount = $state(false);
 
 	async function saveName() {
-		if (!draftName.trim() || !apiUser.value?.account?.accountId) return;
+		if (!draftName.trim() || !apiUser.value?.account?.accountId || savingName) return;
+		savingName = true;
 		try {
 			await renameApiAccount(apiUser.value.account.accountId, draftName.trim());
 			await fetchApiUser();
 			editName = false;
-			notice = 'Profile name saved.';
-		} catch (error) { notice = error instanceof Error ? error.message : 'Profile name could not be updated.'; }
+			toast.success('Profile name saved.');
+		} catch (error) { toast.error(error instanceof Error ? error.message : 'Profile name could not be updated.'); }
+		finally { savingName = false; }
 	}
 
 	async function changePassword(event: SubmitEvent) {
 		event.preventDefault();
-		if (newPassword.length < 6) { notice = 'Use at least 6 characters for the new password.'; return; }
-		if (newPassword !== confirmPassword) { notice = 'The passwords do not match.'; return; }
+		if (newPassword.length < 6) { toast.warning('Use at least 6 characters for the new password.'); return; }
+		if (newPassword !== confirmPassword) { toast.warning('The passwords do not match.'); return; }
+		if (changingPassword) return;
+		changingPassword = true;
 		try {
 			await apiRequest('/my/resetPassword', { method: 'PUT', body: { password: newPassword } });
 			passwordOpen = false;
 			newPassword = '';
 			confirmPassword = '';
-			notice = 'Password changed.';
-		} catch (error) { notice = error instanceof Error ? error.message : 'Password could not be changed.'; }
+			toast.success('Password changed.');
+		} catch (error) { toast.error(error instanceof Error ? error.message : 'Password could not be changed.'); }
+		finally { changingPassword = false; }
 	}
 
 	async function deleteAccount() {
+		if (deletingAccount) return;
+		deletingAccount = true;
 		try {
 			await apiRequest('/my/delete', { method: 'DELETE' });
+			toast.success('Account deleted.');
 			clearApiSession();
 			void goto('/login');
-		} catch (error) { notice = error instanceof Error ? error.message : 'Account could not be deleted.'; }
+		} catch (error) { toast.error(error instanceof Error ? error.message : 'Account could not be deleted.'); }
+		finally { deletingAccount = false; }
 	}
 </script>
 
@@ -63,7 +76,7 @@
 					<div><h2 class="text-sm font-semibold">Profile</h2><p class="mt-1 text-[11px] text-muted-foreground">Your identity in the Cloud Mail workspace.</p></div>
 					<Separator class="my-4" />
 					<div class="space-y-4">
-						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Display name</span><div class="flex min-w-0 items-center gap-2">{#if editName}<Input bind:value={draftName} class="h-9 max-w-[320px] text-xs" />{:else}<span class="truncate text-xs">{apiUser.value?.name || apiUser.value?.email}</span>{/if}{#if editName}<Button size="xs" onclick={() => { void saveName(); }}>Save</Button><Button variant="ghost" size="xs" onclick={() => (editName = false)}>Cancel</Button>{:else}<Button variant="ghost" size="icon-xs" aria-label="Edit display name" onclick={() => { draftName = apiUser.value?.name || ''; editName = true; }}><Pencil data-icon="inline-start" /></Button>{/if}</div></div>
+						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Display name</span><div class="flex min-w-0 items-center gap-2">{#if editName}<Input bind:value={draftName} disabled={savingName} class="h-9 max-w-[320px] text-xs" />{:else}<span class="truncate text-xs">{apiUser.value?.name || apiUser.value?.email}</span>{/if}{#if editName}<Button size="xs" disabled={savingName} onclick={() => { void saveName(); }}>{#if savingName}<LoaderCircle class="animate-spin" data-icon="inline-start" />{/if}{savingName ? 'Saving…' : 'Save'}</Button><Button variant="ghost" size="xs" disabled={savingName} onclick={() => (editName = false)}>Cancel</Button>{:else}<Button variant="ghost" size="icon-xs" aria-label="Edit display name" onclick={() => { draftName = apiUser.value?.name || ''; editName = true; }}><Pencil data-icon="inline-start" /></Button>{/if}</div></div>
 						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Email address</span><span class="truncate text-xs text-muted-foreground">{apiUser.value?.email}</span></div>
 						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Account role</span><span class="text-xs">{apiRoleName()}</span></div>
 					</div>
@@ -84,28 +97,25 @@
 				<section class="rounded-xl border border-destructive/30 p-4">
 					<div class="flex items-start gap-3"><ShieldAlert size={16} class="mt-0.5 text-destructive" /><div class="flex-1"><h2 class="text-xs font-semibold">Delete account</h2><p class="mt-1 max-w-[540px] text-[10px] leading-relaxed text-muted-foreground">Deleting your account removes your user profile and connected mailboxes. This action cannot be undone.</p></div><Button variant="destructive" size="sm" class="shrink-0 rounded-full" onclick={() => (deleteOpen = true)}>Delete account</Button></div>
 				</section>
-				{#if notice}<p role="status" class="flex items-center gap-1.5 text-[10px] text-muted-foreground"><Check size={13} />{notice}</p>{/if}
 			</div>
 		</div>
 	</div>
 </section>
 
 {#if passwordOpen}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="presentation">
-		<button class="absolute inset-0" aria-label="Close password dialog" onclick={() => (passwordOpen = false)}></button>
-		<div role="dialog" aria-modal="true" aria-labelledby="password-title" class="relative z-10 w-full max-w-[390px] rounded-2xl border bg-background p-5 shadow-xl">
-			<h2 id="password-title" class="text-sm font-semibold">Change password</h2><p class="mt-1 text-[10px] text-muted-foreground">Enter and confirm your new password.</p>
-			<form class="mt-4 space-y-3" onsubmit={changePassword}><Input bind:value={newPassword} type="password" minlength={6} required placeholder="New password" class="h-9 text-xs" /><Input bind:value={confirmPassword} type="password" minlength={6} required placeholder="Confirm new password" class="h-9 text-xs" /><div class="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" size="sm" class="rounded-full" onclick={() => (passwordOpen = false)}>Cancel</Button><Button type="submit" size="sm" class="rounded-full">Save password</Button></div></form>
-		</div>
-	</div>
+	<Dialog.Root bind:open={passwordOpen}>
+		<Dialog.Content class="w-[calc(100vw-2rem)] max-w-[390px] gap-0 p-5">
+			<Dialog.Header><Dialog.Title id="password-title" class="text-sm font-semibold">Change password</Dialog.Title><Dialog.Description class="text-[10px] text-muted-foreground">Enter and confirm your new password.</Dialog.Description></Dialog.Header>
+			<form class="mt-4 space-y-3" onsubmit={changePassword}><Input bind:value={newPassword} type="password" minlength={6} required placeholder="New password" class="h-9 text-xs" disabled={changingPassword} /><Input bind:value={confirmPassword} type="password" minlength={6} required placeholder="Confirm new password" class="h-9 text-xs" disabled={changingPassword} /><div class="flex justify-end gap-2 pt-2"><Button type="button" variant="ghost" size="sm" class="rounded-full" disabled={changingPassword} onclick={() => (passwordOpen = false)}>Cancel</Button><Button type="submit" size="sm" class="rounded-full" disabled={changingPassword}>{#if changingPassword}<LoaderCircle class="animate-spin" data-icon="inline-start" />{/if}{changingPassword ? 'Saving…' : 'Save password'}</Button></div></form>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}
 
 {#if deleteOpen}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="presentation">
-		<button class="absolute inset-0" aria-label="Close delete account dialog" onclick={() => (deleteOpen = false)}></button>
-		<div role="dialog" aria-modal="true" aria-labelledby="delete-title" class="relative z-10 w-full max-w-[400px] rounded-2xl border bg-background p-5 shadow-xl">
-			<h2 id="delete-title" class="text-sm font-semibold">Delete your account?</h2><p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Your account and connected mailboxes will be removed.</p>
-			<div class="mt-5 flex justify-end gap-2"><Button variant="ghost" size="sm" class="rounded-full" onclick={() => (deleteOpen = false)}>Cancel</Button><Button variant="destructive" size="sm" class="rounded-full" onclick={deleteAccount}>Continue</Button></div>
-		</div>
-	</div>
+	<Dialog.Root bind:open={deleteOpen}>
+		<Dialog.Content class="w-[calc(100vw-2rem)] max-w-[400px] gap-0 p-5">
+			<Dialog.Header><Dialog.Title id="delete-title" class="text-sm font-semibold">Delete your account?</Dialog.Title><Dialog.Description class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Your account and connected mailboxes will be removed.</Dialog.Description></Dialog.Header>
+			<div class="mt-5 flex justify-end gap-2"><Button variant="ghost" size="sm" class="rounded-full" disabled={deletingAccount} onclick={() => (deleteOpen = false)}>Cancel</Button><Button variant="destructive" size="sm" class="rounded-full" disabled={deletingAccount} onclick={deleteAccount}>{#if deletingAccount}<LoaderCircle class="animate-spin" data-icon="inline-start" />{/if}{deletingAccount ? 'Deleting…' : 'Continue'}</Button></div>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}

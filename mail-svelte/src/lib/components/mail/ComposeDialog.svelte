@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, Code2, ContactRound, Eraser, Eye, ImagePlus, IndentDecrease, IndentIncrease, Italic, Link2, List, ListOrdered, Maximize2, Minimize2, MoreHorizontal, Paperclip, Send, Smile, Table2, Underline, X } from '@lucide/svelte';
-	import { onMount } from 'svelte';
+	import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, Code2, ContactRound, Eraser, Eye, ImagePlus, IndentDecrease, IndentIncrease, Italic, Link2, List, ListOrdered, LoaderCircle, Maximize2, Minimize2, MoreHorizontal, Paperclip, Send, Smile, Table2, Underline, X } from '@lucide/svelte';
+	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { Editor } from '@tiptap/core';
 	import StarterKit from '@tiptap/starter-kit';
@@ -9,6 +9,7 @@
 	import TextAlign from '@tiptap/extension-text-align';
 	import { TextStyleKit } from '@tiptap/extension-text-style';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import SelectControl from '$lib/components/SelectControl.svelte';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
@@ -22,6 +23,7 @@
 	import { removeAttachment as removeStoredAttachment, storeAttachment } from '$lib/attachment-store.js';
 	import { sendApiEmail } from '$lib/api/mail.js';
 	import { deleteDrafts, saveDraft as persistDraft } from '$lib/draft-store.js';
+	import { toast } from 'svelte-sonner';
 
 	let recipientInput = $state('');
 	let recipients = $state<string[]>(mailUi.composeTo ? mailUi.composeTo.split(',').map((email) => email.trim()).filter(Boolean) : []);
@@ -40,6 +42,7 @@
 	let tableOpen = $state(false);
 	let sourceOpen = $state(false);
 	let previewOpen = $state(false);
+	let clearConfirmOpen = $state(false);
 	let fullscreen = $state(false);
 	let imageUrl = $state('');
 	let sourceHtml = $state('');
@@ -58,11 +61,12 @@
 	const userName = $derived(apiUser.value?.name || apiUser.value?.email || '');
 	const recentContacts = $derived([...new Set(mailMessages.flatMap((message) => [message.address, ...(message.recipients ?? [])]))].filter((email) => email && email !== apiUser.value?.email).slice(0, 500));
 
-	onMount(() => {
-		if (!editorContainer) return;
-		const initial = existingDraft?.htmlBody || plainTextToHtml(mailUi.composeBody || existingDraft?.body.join('\n') || '');
+	$effect(() => {
+		const element = editorContainer;
+		if (!element) return;
+		const initial = untrack(() => existingDraft?.htmlBody || plainTextToHtml(mailUi.composeBody || existingDraft?.body.join('\n') || ''));
 		const editor = new Editor({
-			element: editorContainer,
+			element,
 			extensions: [StarterKit.configure({ link: { openOnClick: false, defaultProtocol: 'https', protocols: ['mailto'] } }), Image.configure({ allowBase64: true }), TableKit, TextAlign.configure({ types: ['heading', 'paragraph'] }), TextStyleKit],
 			content: sanitizeRichHtml(initial),
 			editorProps: { attributes: { class: 'mail-rich-content mail-rich-editor min-h-full outline-none', role: 'textbox', 'aria-label': 'Message body', 'aria-multiline': 'true' } },
@@ -74,7 +78,10 @@
 		});
 		editorState = { editor };
 		bodyText = editor.isEmpty ? '' : editor.getText().trim() || 'Rich content';
-		return () => editor.destroy();
+		return () => {
+			editor.destroy();
+			editorState = { editor: null };
+		};
 	});
 
 	function addRecipient(value = recipientInput) {
@@ -114,7 +121,7 @@
 			const files = await Promise.all(Array.from(input.files).map(async (file) => {
 				let storageId: string | undefined;
 				try { storageId = await storeAttachment(file); }
-				catch { notice = 'Attachment storage is unavailable; this file will last until refresh.'; }
+			catch { toast.warning('Attachment storage is unavailable; this file will last until refresh.'); }
 				return { filename: file.name, size: file.size, contentType: file.type, file, storageId };
 			}));
 			attachments = [...attachments, ...files];
@@ -129,14 +136,19 @@
 	}
 
 	function clearContent() {
-		if (!window.confirm('Clear this message, including recipients and attachments?')) return;
+		clearConfirmOpen = true;
+	}
+
+	function confirmClearContent() {
 		for (const attachment of attachments) if (attachment.storageId) void removeStoredAttachment(attachment.storageId);
 		editorState.editor?.commands.clearContent();
 		recipients = [];
 		recipientInput = '';
 		subject = '';
 		attachments = [];
-		notice = 'Message cleared.';
+		clearConfirmOpen = false;
+		notice = '';
+		toast.info('Message cleared.');
 	}
 
 	function formatBytes(bytes: number) {
@@ -287,20 +299,20 @@
 			}
 			mailUi.refreshKey += 1;
 			hideComposer();
+			toast.success('Message sent.');
 			void goto('/sent');
 		} catch (error) {
-			notice = error instanceof Error ? error.message : 'Message could not be sent.';
+			toast.error(error instanceof Error ? error.message : 'Message could not be sent.');
 		} finally {
 			sending = false;
 		}
 	}
 </script>
 
-<div class="fixed inset-0 z-50 flex items-end justify-end bg-foreground/15 p-0 backdrop-blur-[1px] sm:p-5" role="presentation">
-	<button class="absolute inset-0 h-full w-full cursor-default" aria-label="Close composer" onclick={close}></button>
-	<div role="dialog" aria-modal="true" aria-labelledby="compose-title" class="relative z-10 flex w-full flex-col overflow-hidden border bg-background shadow-2xl {fullscreen ? 'h-svh max-h-svh rounded-none' : 'max-h-[min(760px,100svh)] rounded-t-2xl sm:max-w-[620px] sm:rounded-xl'}" tabindex="-1">
+	<Dialog.Root open={mailUi.composeOpen} onOpenChange={(open) => { if (!open) close(); }}>
+	<Dialog.Content showCloseButton={false} class="fixed bottom-0 left-auto right-0 top-auto flex w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden border bg-background p-0 shadow-2xl {fullscreen ? 'left-0 right-0 top-0 h-svh max-h-svh rounded-none' : 'max-h-[min(760px,100svh)] rounded-t-2xl sm:bottom-5 sm:right-5 sm:max-w-[620px] sm:rounded-xl'}">
 		<div class="flex shrink-0 items-center justify-between bg-muted/50 px-4 py-3">
-			<div><h2 id="compose-title" class="text-xs font-semibold">{draftId ? 'Edit draft' : 'New message'}</h2><p class="mt-0.5 text-[9px] text-muted-foreground">From {userName} &lt;{sender}&gt;</p></div>
+			<div><Dialog.Title id="compose-title" class="text-xs font-semibold">{draftId ? 'Edit draft' : 'New message'}</Dialog.Title><Dialog.Description class="mt-0.5 text-[9px] text-muted-foreground">From {userName} &lt;{sender}&gt;</Dialog.Description></div>
 			<div class="flex items-center gap-1"><Button variant="ghost" size="icon-xs" aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen composer'} onclick={() => (fullscreen = !fullscreen)}>{#if fullscreen}<Minimize2 data-icon="inline-start" />{:else}<Maximize2 data-icon="inline-start" />{/if}</Button><Button variant="ghost" size="icon-xs" aria-label="Close composer" onclick={close}><X data-icon="inline-start" /></Button></div>
 		</div>
 		<form class="flex min-h-0 flex-1 flex-col px-4" onsubmit={prepareMessage}>
@@ -349,17 +361,37 @@
 			{#if notice}<p class="mb-2 text-[10px] text-muted-foreground" role="status">{notice}</p>{/if}
 			<input bind:this={attachmentInput} type="file" multiple class="hidden" onchange={addAttachments} />
 			<div class="flex shrink-0 items-center justify-between gap-3 border-t py-3">
-				<div class="flex items-center gap-1"><Button type="submit" size="sm" class="rounded-full px-4" disabled={sending}>{sending ? 'Sending…' : 'Send'} <Send data-icon="inline-start" /></Button><Button type="button" variant="ghost" size="icon-sm" aria-label="Add attachments" onclick={() => attachmentInput?.click()}><Paperclip data-icon="inline-start" /></Button><Button type="button" variant="ghost" size="icon-sm" aria-label="Clear message and attachments" onclick={clearContent}><Eraser data-icon="inline-start" /></Button></div>
+				<div class="flex items-center gap-1"><Button type="submit" size="sm" class="rounded-full px-4" disabled={sending}>{#if sending}<LoaderCircle class="animate-spin" data-icon="inline-start" />{:else}<Send data-icon="inline-start" />{/if}{sending ? 'Sending…' : 'Send'}</Button><Button type="button" variant="ghost" size="icon-sm" aria-label="Add attachments" disabled={sending} onclick={() => attachmentInput?.click()}><Paperclip data-icon="inline-start" /></Button><Button type="button" variant="ghost" size="icon-sm" aria-label="Clear message and attachments" disabled={sending} onclick={clearContent}><Eraser data-icon="inline-start" /></Button></div>
 				<Button type="button" variant="ghost" size="sm" class="rounded-full text-muted-foreground" onclick={saveDraft}>Save draft</Button>
 			</div>
 		</form>
-	</div>
-</div>
+	</Dialog.Content>
+	</Dialog.Root>
 
 {#if sourceOpen}
-	<div class="fixed inset-0 z-[60] flex items-center justify-center bg-foreground/25 p-4" role="presentation"><button class="absolute inset-0" aria-label="Close HTML source editor" onclick={() => (sourceOpen = false)}></button><div role="dialog" aria-modal="true" aria-labelledby="source-title" class="relative z-10 flex max-h-[85svh] w-full max-w-[760px] flex-col rounded-xl border bg-background p-4 shadow-xl"><h2 id="source-title" class="text-sm font-semibold">HTML source</h2><p class="mt-1 text-[10px] text-muted-foreground">Unsupported tags and unsafe links are removed when applied.</p><textarea bind:value={sourceHtml} spellcheck="false" aria-label="HTML source" class="mt-3 min-h-[280px] flex-1 resize-y rounded-lg border bg-muted/30 p-3 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"></textarea><div class="mt-3 flex justify-end gap-2"><Button variant="ghost" size="sm" onclick={() => (sourceOpen = false)}>Cancel</Button><Button size="sm" onclick={applySource}>Apply HTML</Button></div></div></div>
+	<Dialog.Root bind:open={sourceOpen}>
+		<Dialog.Content class="z-[60] flex w-[calc(100vw-2rem)] max-h-[85svh] max-w-[760px] flex-col gap-0 p-4">
+			<Dialog.Header><Dialog.Title id="source-title" class="text-sm font-semibold">HTML source</Dialog.Title><Dialog.Description class="text-[10px] text-muted-foreground">Unsupported tags and unsafe links are removed when applied.</Dialog.Description></Dialog.Header>
+			<textarea bind:value={sourceHtml} spellcheck="false" aria-label="HTML source" class="mt-3 min-h-[280px] flex-1 resize-y rounded-lg border bg-muted/30 p-3 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"></textarea>
+			<div class="mt-3 flex justify-end gap-2"><Button variant="ghost" size="sm" onclick={() => (sourceOpen = false)}>Cancel</Button><Button size="sm" onclick={applySource}>Apply HTML</Button></div>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}
 
 {#if previewOpen}
-	<div class="fixed inset-0 z-[60] flex items-center justify-center bg-foreground/25 p-4" role="presentation"><button class="absolute inset-0" aria-label="Close message preview" onclick={() => (previewOpen = false)}></button><div role="dialog" aria-modal="true" aria-labelledby="compose-preview-title" class="relative z-10 flex max-h-[85svh] w-full max-w-[680px] flex-col overflow-hidden rounded-xl border bg-background shadow-xl"><div class="flex items-center justify-between border-b px-4 py-3"><div><h2 id="compose-preview-title" class="text-sm font-semibold">{subject || '(No subject)'}</h2><p class="mt-1 text-[10px] text-muted-foreground">To: {recipients.join(', ') || 'No recipients'}</p></div><Button variant="ghost" size="icon-xs" aria-label="Close preview" onclick={() => (previewOpen = false)}><X data-icon="inline-start" /></Button></div><div class="min-h-0 overflow-y-auto p-4"><RichMailBody html={readBody().html} class="text-sm leading-relaxed" /></div></div></div>
+	<Dialog.Root bind:open={previewOpen}>
+		<Dialog.Content showCloseButton={false} class="z-[60] flex w-[calc(100vw-2rem)] max-h-[85svh] max-w-[680px] flex-col gap-0 overflow-hidden p-0">
+			<Dialog.Header class="flex-row items-center justify-between border-b px-4 py-3"><div><Dialog.Title id="compose-preview-title" class="text-sm font-semibold">{subject || '(No subject)'}</Dialog.Title><Dialog.Description class="mt-1 text-[10px]">To: {recipients.join(', ') || 'No recipients'}</Dialog.Description></div><Button variant="ghost" size="icon-xs" aria-label="Close preview" onclick={() => (previewOpen = false)}><X data-icon="inline-start" /></Button></Dialog.Header>
+			<div class="min-h-0 overflow-y-auto p-4"><RichMailBody html={readBody().html} class="text-sm leading-relaxed" /></div>
+		</Dialog.Content>
+	</Dialog.Root>
+{/if}
+
+{#if clearConfirmOpen}
+	<Dialog.Root bind:open={clearConfirmOpen}>
+		<Dialog.Content class="z-[60] w-[calc(100vw-2rem)] max-w-[390px] gap-0 p-5">
+			<Dialog.Header><Dialog.Title class="text-sm font-semibold">Clear this message?</Dialog.Title><Dialog.Description class="text-[11px] leading-relaxed">This removes its recipients, content, and attachments.</Dialog.Description></Dialog.Header>
+			<div class="mt-5 flex justify-end gap-2"><Button variant="ghost" size="sm" onclick={() => (clearConfirmOpen = false)}>Cancel</Button><Button variant="destructive" size="sm" onclick={confirmClearContent}>Clear message</Button></div>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}

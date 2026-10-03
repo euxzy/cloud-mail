@@ -1,14 +1,17 @@
 <script lang="ts">
-	import { Check, ExternalLink, Image, Save } from '@lucide/svelte';
+	import { ExternalLink, Image, LoaderCircle, Save } from '@lucide/svelte';
 	import { onMount } from 'svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Separator } from '$lib/components/ui/separator/index.js';
 	import SelectControl from '$lib/components/SelectControl.svelte';
+	import LoadingState from '$lib/components/LoadingState.svelte';
 	import { Switch } from '$lib/components/ui/switch/index.js';
 	import { assetUrl, deleteSystemBackground, getSystemSettings, saveSystemBackground, saveSystemBlacklist, saveSystemSettings } from '$lib/api/config.js';
 	import { hasPermission } from '$lib/permissions.svelte.js';
+	import { toast } from 'svelte-sonner';
 
 	let config = $state({
 		title: 'Cloud Mail',
@@ -86,7 +89,6 @@
 		resendTokenValue: ''
 	});
 	let showPrefixes = $state(false);
-	let saved = $state(false);
 	let loading = $state(true);
 	let saving = $state(false);
 	let settingsError = $state('');
@@ -164,7 +166,6 @@
 			return;
 		}
 		saving = true;
-		saved = false;
 		settingsError = '';
 		const mode = (value: string) => ({ Always: 0, Disabled: 1, 'By count': 2 } as Record<string, number>)[value] ?? 1;
 		const payload: Record<string, unknown> = {
@@ -207,7 +208,7 @@
 				await saveSystemSettings({ resendTokens: { [tokenDomain]: config.resendTokenValue.trim() } });
 			}
 			hydrateSettings(await getSystemSettings());
-			saved = true;
+			toast.success('System settings saved.');
 		} catch (error) { settingsError = error instanceof Error ? error.message : 'System settings could not be saved.'; }
 		finally { saving = false; }
 	}
@@ -217,12 +218,12 @@
 	<div class="mx-auto max-w-[1180px]">
 		<div class="flex flex-wrap items-end justify-between gap-4">
 			<div><h1 class="text-[27px] font-semibold tracking-[-0.055em] sm:text-[30px]">System settings</h1><p class="mt-1 text-[13px] text-muted-foreground">Configure registration, mail behavior, and workspace defaults.</p></div>
-			<div class="flex items-center gap-2"><Badge variant="outline" class="h-5 rounded-full px-2 text-[9px]">Admin</Badge><Button type="submit" form="system-settings-form" size="sm" class="rounded-full" disabled={loading || saving || !canEditSettings}><Save data-icon="inline-start" />Save settings</Button></div>
+			<div class="flex items-center gap-2"><Badge variant="outline" class="h-5 rounded-full px-2 text-[9px]">Admin</Badge><Button type="submit" form="system-settings-form" size="sm" class="rounded-full" disabled={loading || saving || !canEditSettings}>{#if saving}<LoaderCircle class="animate-spin" data-icon="inline-start" />{:else}<Save data-icon="inline-start" />{/if}{saving ? 'Saving…' : 'Save settings'}</Button></div>
 		</div>
 
 		<form id="system-settings-form" class="mt-5" onsubmit={saveSettings}>
 			{#if loading}
-				<p role="status" class="rounded-xl border bg-card p-5 text-xs text-muted-foreground">Loading settings from the API…</p>
+				<div class="rounded-xl border bg-card p-5"><LoadingState label="Loading settings from the API…" /></div>
 			{:else if !Object.keys(originalSettings).length}
 				<div class="rounded-xl border bg-card p-5"><p role="alert" class="text-xs text-destructive">{settingsError || 'No settings were returned by the API.'}</p><Button type="button" variant="outline" size="sm" class="mt-4 rounded-full" onclick={loadSettings}>Retry</Button></div>
 			{:else}
@@ -314,7 +315,7 @@
 					<h2 class="text-xs font-semibold">OAuth credentials</h2><p class="mt-1 text-[10px] text-muted-foreground">Client IDs and secrets are stored by the API. Empty secret fields keep the saved value.</p><Separator class="my-4" /><div class="space-y-3"><div class="grid gap-2 sm:grid-cols-2"><Input bind:value={config.googleClientId} placeholder="Google client ID" class="h-9 text-xs" /><Input bind:value={config.googleClientSecret} type="password" placeholder={configuredSecrets.googleClientSecret ? 'Configured — enter to replace' : 'Google client secret'} class="h-9 text-xs" /></div><div class="grid gap-2 sm:grid-cols-2"><Input bind:value={config.githubClientId} placeholder="GitHub client ID" class="h-9 text-xs" /><Input bind:value={config.githubClientSecret} type="password" placeholder={configuredSecrets.githubClientSecret ? 'Configured — enter to replace' : 'GitHub client secret'} class="h-9 text-xs" /></div><div class="grid gap-2 sm:grid-cols-2"><Input bind:value={config.linuxDoClientId} placeholder="Linux DO client ID" class="h-9 text-xs" /><Input bind:value={config.linuxDoClientSecret} type="password" placeholder={configuredSecrets.linuxDoClientSecret ? 'Configured — enter to replace' : 'Linux DO client secret'} class="h-9 text-xs" /></div></div>
 				</section>
 			</div>
-			<div class="mt-4 flex items-center justify-end gap-3"><span role="status" class="text-[10px] text-muted-foreground">{#if saved}<Check size={12} class="mr-1 inline" />Saved to API{/if}</span><Button type="submit" size="sm" class="rounded-full" disabled={saving || !canEditSettings}><Save data-icon="inline-start" />{saving ? 'Saving…' : 'Save settings'}</Button></div>
+			<div class="mt-4 flex justify-end"><Button type="submit" size="sm" class="rounded-full" disabled={saving || !canEditSettings}>{#if saving}<LoaderCircle class="animate-spin" data-icon="inline-start" />{:else}<Save data-icon="inline-start" />{/if}{saving ? 'Saving…' : 'Save settings'}</Button></div>
 				</fieldset>
 			{/if}
 		</form>
@@ -322,28 +323,29 @@
 </section>
 
 {#if showPrefixes}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="presentation">
-		<button class="absolute inset-0" aria-label="Close email prefix settings" onclick={() => (showPrefixes = false)}></button>
-		<div role="dialog" aria-modal="true" aria-labelledby="prefix-title" class="relative z-10 w-full max-w-[420px] rounded-2xl border bg-background p-5 shadow-xl">
-			<h2 id="prefix-title" class="text-sm font-semibold">Email prefix rules</h2><p class="mt-1 text-[10px] text-muted-foreground">Set the minimum local-part length and text fragments that are forbidden by the Worker.</p>
+	<Dialog.Root bind:open={showPrefixes}>
+		<Dialog.Content class="w-[calc(100vw-2rem)] max-w-[420px] gap-0 p-5">
+			<Dialog.Header><Dialog.Title id="prefix-title" class="text-sm font-semibold">Email prefix rules</Dialog.Title><Dialog.Description class="text-[10px] text-muted-foreground">Set the minimum local-part length and text fragments that are forbidden by the Worker.</Dialog.Description></Dialog.Header>
 			<div class="mt-4 grid gap-3 sm:grid-cols-2"><label class="space-y-1 text-[10px]">Minimum prefix length<Input bind:value={config.minEmailPrefix} type="number" min="0" max="64" class="h-9 text-xs" /></label><label class="space-y-1 text-[10px]">Forbidden text fragments<textarea bind:value={config.emailPrefixFilter} rows="3" placeholder="One per line" class="w-full rounded-lg border bg-background p-2 text-xs"></textarea></label></div>
 			<div class="mt-5 flex justify-end"><Button size="sm" class="rounded-full" onclick={() => (showPrefixes = false)}>Done</Button></div>
-		</div>
-	</div>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}
 
 {#if showBackgroundPreview}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="presentation">
-		<button class="absolute inset-0" aria-label="Close background preview" onclick={() => (showBackgroundPreview = false)}></button>
-		<div role="dialog" aria-modal="true" aria-labelledby="background-preview-title" class="relative z-10 w-full max-w-[640px] overflow-hidden rounded-xl border bg-background shadow-xl"><div class="flex items-center justify-between px-4 py-3"><h2 id="background-preview-title" class="text-xs font-semibold">Sign-in background preview</h2><Button variant="ghost" size="xs" onclick={() => (showBackgroundPreview = false)}>Close</Button></div>{#if config.loginBackground}<img src={assetUrl(config.loginBackground, config.storageDomain)} alt="Configured sign-in background" class="max-h-[60svh] w-full object-cover" />{:else}<p class="p-8 text-center text-xs text-muted-foreground">No sign-in background is configured.</p>{/if}</div>
-	</div>
+	<Dialog.Root bind:open={showBackgroundPreview}>
+		<Dialog.Content showCloseButton={false} class="w-[calc(100vw-2rem)] max-w-[640px] gap-0 overflow-hidden p-0">
+			<Dialog.Header class="flex-row items-center justify-between px-4 py-3"><Dialog.Title id="background-preview-title" class="text-xs font-semibold">Sign-in background preview</Dialog.Title><Button variant="ghost" size="xs" onclick={() => (showBackgroundPreview = false)}>Close</Button></Dialog.Header>
+			{#if config.loginBackground}<img src={assetUrl(config.loginBackground, config.storageDomain)} alt="Configured sign-in background" class="max-h-[60svh] w-full object-cover" />{:else}<p class="p-8 text-center text-xs text-muted-foreground">No sign-in background is configured.</p>{/if}
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}
 
 {#if showAnnouncementPreview}
-	<div class="fixed inset-0 z-50 flex items-start justify-end p-5" role="presentation">
-		<button class="absolute inset-0 bg-foreground/10" aria-label="Close announcement preview" onclick={() => (showAnnouncementPreview = false)}></button>
-		<div role="dialog" aria-modal="true" aria-labelledby="preview-announcement-title" class="relative z-10 w-full max-w-[360px] rounded-xl border bg-background p-4 shadow-xl">
-			<h2 id="preview-announcement-title" class="text-sm font-semibold">{config.announcementTitle}</h2><p class="mt-2 whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">{config.announcementBody}</p><Button variant="outline" size="sm" class="mt-4" onclick={() => (showAnnouncementPreview = false)}>Close</Button>
-		</div>
-	</div>
+	<Dialog.Root bind:open={showAnnouncementPreview}>
+		<Dialog.Content showCloseButton={false} class="fixed left-auto right-5 top-5 w-[calc(100vw-2rem)] max-w-[360px] translate-x-0 translate-y-0 gap-0 p-4">
+			<Dialog.Header><Dialog.Title id="preview-announcement-title" class="text-sm font-semibold">{config.announcementTitle}</Dialog.Title><Dialog.Description class="mt-2 whitespace-pre-wrap text-[11px] leading-relaxed">{config.announcementBody}</Dialog.Description></Dialog.Header>
+			<Button variant="outline" size="sm" class="mt-4" onclick={() => (showAnnouncementPreview = false)}>Close</Button>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}

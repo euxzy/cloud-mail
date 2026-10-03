@@ -1,12 +1,14 @@
 <script lang="ts">
-	import { Bell, ChevronDown, Mail, Menu, Moon, Search, Settings, Sun, X } from '@lucide/svelte';
+	import { Bell, ChevronDown, Mail, Menu, Moon, Search, Settings, Sun } from '@lucide/svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import * as Avatar from '$lib/components/ui/avatar/index.js';
+	import * as Drawer from '$lib/components/ui/drawer/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import AccountManagerDialog from '$lib/components/mail/AccountManagerDialog.svelte';
+	import LoadingState from '$lib/components/LoadingState.svelte';
 	import ComposeDialog from '$lib/components/mail/ComposeDialog.svelte';
 	import MailSidebar from '$lib/components/mail/MailSidebar.svelte';
 	import Brand from '$lib/components/mail/Brand.svelte';
@@ -19,11 +21,11 @@
 	import { fetchApiAccounts, fetchApiMailbox } from '$lib/api/mail.js';
 	import { hasPermission } from '$lib/permissions.svelte.js';
 	import { loadDrafts } from '$lib/draft-store.js';
+	import { toast } from 'svelte-sonner';
 
 	let { children } = $props();
 	let menuOpen = $state(false);
 	let profileOpen = $state(false);
-	let noticeOpen = $state(false);
 	let announcement = $state({ enabled: false, title: '', body: '', position: 'top-right', duration: 0, width: 400, offset: 0, type: 'info' });
 	let darkMode = $state(false);
 	let dataReady = $state(false);
@@ -54,9 +56,32 @@
 		document.documentElement.classList.toggle('dark', darkMode);
 		localStorage.setItem('cloud-mail-theme', darkMode ? 'dark' : 'light');
 	}
+	type ToastPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'top-center' | 'bottom-center';
+	const toastPositions: ToastPosition[] = ['top-left', 'top-right', 'bottom-left', 'bottom-right', 'top-center', 'bottom-center'];
 	function openAnnouncement() {
-		noticeOpen = true;
-		if (announcement.duration > 0) setTimeout(() => { noticeOpen = false; }, announcement.duration);
+		const position = toastPositions.includes(announcement.position as ToastPosition) ? announcement.position as ToastPosition : 'top-right';
+		const offset = Math.max(0, announcement.offset);
+		const options = {
+			position,
+			duration: announcement.duration > 0 ? announcement.duration : Number.POSITIVE_INFINITY,
+			closeButton: true,
+			description: announcement.body || undefined,
+			style: {
+				width: `calc(100vw - ${32 + offset * 2}px)`,
+				maxWidth: `${Math.max(240, announcement.width)}px`,
+				marginTop: position.startsWith('top') ? `${offset}px` : undefined,
+				marginBottom: position.startsWith('bottom') ? `${offset}px` : undefined,
+				marginLeft: position.endsWith('left') ? `${offset}px` : undefined,
+				marginRight: position.endsWith('right') ? `${offset}px` : undefined
+			}
+		};
+		const title = announcement.title || 'Announcement';
+		switch (announcement.type) {
+			case 'success': toast.success(title, options); break;
+			case 'warning': toast.warning(title, options); break;
+			case 'info': toast.info(title, options); break;
+			default: toast(title, options);
+		}
 	}
 	async function signOut() {
 		try { await logoutApi(); } catch { /* Clear the local token when the API is offline. */ }
@@ -143,10 +168,18 @@
 				if (requestKey === lastMailboxFetchKey) return;
 				lastMailboxFetchKey = requestKey;
 				const requestId = ++mailboxRequestId;
+				mailUi.mailboxLoading = true;
 				mailMessages.splice(0, mailMessages.length);
 				void loadDrafts().then((drafts) => {
-					if (requestId === mailboxRequestId && page.url.pathname === '/draft') mailMessages.splice(0, mailMessages.length, ...drafts);
-				}).catch((error) => { apiNotice = error instanceof Error ? error.message : 'Drafts could not be loaded.'; });
+					if (requestId === mailboxRequestId && page.url.pathname === '/draft') {
+						mailMessages.splice(0, mailMessages.length, ...drafts);
+						apiNotice = '';
+					}
+				}).catch((error) => {
+					if (requestId === mailboxRequestId) apiNotice = error instanceof Error ? error.message : 'Drafts could not be loaded.';
+				}).finally(() => {
+					if (requestId === mailboxRequestId) mailUi.mailboxLoading = false;
+				});
 			}
 			return;
 		}
@@ -237,27 +270,22 @@
 	<div class="flex min-h-0 flex-1 overflow-hidden">
 		<MailSidebar class="hidden lg:flex" onCompose={openComposer} onAccounts={openAccounts} />
 		<main bind:this={mainElement} id="main-content" class="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-card lg:m-3 lg:ml-0 lg:rounded-2xl lg:border lg:shadow-[0_12px_40px_-30px_rgba(20,80,85,0.35)]">
-			{#if !dataReady}<div class="flex h-full items-center justify-center text-xs text-muted-foreground">Loading workspace…</div>{:else}
+			{#if !dataReady}<div class="flex h-full items-center justify-center"><LoadingState label="Loading your workspace…" /></div>{:else}
 				{#if apiNotice}<div role="alert" class="mx-4 mt-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive sm:mx-6 lg:mx-8">{apiNotice}</div>{/if}
 				{@render children()}
 			{/if}
 		</main>
 	</div>
 
-	{#if menuOpen}
-		<div class="fixed inset-0 z-40 bg-foreground/20 lg:hidden">
-			<button class="absolute inset-0 h-full w-full cursor-default" aria-label="Close navigation" onclick={() => (menuOpen = false)}></button>
-			<MailSidebar class="absolute bottom-0 left-0 top-16 z-10 h-auto shadow-xl" onNavigate={() => (menuOpen = false)} onCompose={openComposer} onAccounts={openAccounts} />
-		</div>
-	{/if}
+	<Drawer.Root bind:open={menuOpen} direction="left">
+		<Drawer.Content class="h-dvh w-[min(280px,85vw)] max-w-none rounded-none p-0 lg:hidden">
+			<Drawer.Header class="sr-only">
+				<Drawer.Title>Mail navigation</Drawer.Title>
+				<Drawer.Description>Choose a mailbox folder or account.</Drawer.Description>
+			</Drawer.Header>
+			<MailSidebar class="h-full w-full shadow-xl" onNavigate={() => (menuOpen = false)} onCompose={openComposer} onAccounts={openAccounts} />
+		</Drawer.Content>
+	</Drawer.Root>
 	{#if mailUi.composeOpen}<ComposeDialog />{/if}
 	{#if mailUi.accountsOpen}<AccountManagerDialog />{/if}
-	{#if noticeOpen}
-		<div class="pointer-events-none fixed inset-0 z-50 flex {announcement.position.startsWith('bottom') ? 'items-end' : 'items-start'} {announcement.position.endsWith('left') ? 'justify-start' : 'justify-end'}" style={`padding:${16 + Math.max(0, announcement.offset)}px`} role="status">
-			<div class="pointer-events-auto w-full rounded-xl border bg-background p-4 shadow-xl {announcement.type === 'warning' ? 'border-amber-500/50' : announcement.type === 'success' ? 'border-emerald-500/50' : announcement.type === 'primary' ? 'border-primary/50' : ''}" style={`max-width:min(${Math.max(240, announcement.width)}px,calc(100vw - ${32 + Math.max(0, announcement.offset) * 2}px))`}>
-				<div class="flex items-start justify-between gap-3"><h2 class="text-xs font-semibold">{announcement.title}</h2><Button variant="ghost" size="icon-xs" aria-label="Close announcement" onclick={() => (noticeOpen = false)}><X data-icon="inline-start" /></Button></div>
-				<p class="mt-2 whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">{announcement.body}</p>
-			</div>
-		</div>
-	{/if}
 </div>

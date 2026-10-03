@@ -1,18 +1,29 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { ArrowDownRight, Mail, Send, Users, WalletCards } from '@lucide/svelte';
+	import { ArrowDownRight, LoaderCircle, Mail, RefreshCw, Send, Users, WalletCards } from '@lucide/svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Chart from '$lib/components/ui/chart/index.js';
+	import LoadingState from '$lib/components/LoadingState.svelte';
+	import { scaleBand } from 'd3-scale';
+	import { BarChart } from 'layerchart';
 	import { fetchAnalysis, type AnalysisData } from '$lib/api/admin.js';
 
 	let data = $state<AnalysisData | null>(null);
 	let notice = $state('');
 	let loading = $state(true);
-	onMount(() => {
-		void fetchAnalysis(Intl.DateTimeFormat().resolvedOptions().timeZone).then((value) => { data = value; })
-			.catch((error) => { notice = error instanceof Error ? error.message : 'Analytics could not be loaded.'; })
-			.finally(() => { loading = false; });
-	});
+	async function loadAnalytics() {
+		loading = true;
+		notice = '';
+		try {
+			data = await fetchAnalysis(Intl.DateTimeFormat().resolvedOptions().timeZone);
+		} catch (error) {
+			notice = error instanceof Error ? error.message : 'Analytics could not be loaded.';
+		} finally {
+			loading = false;
+		}
+	}
+	onMount(() => { void loadAnalytics(); });
 
 	const summary = $derived([
 		{ label: 'Messages received', value: Number(data?.numberCount?.receiveTotal ?? 0), detail: `${Number(data?.numberCount?.normalReceiveTotal ?? 0).toLocaleString()} active · ${Number(data?.numberCount?.delReceiveTotal ?? 0).toLocaleString()} deleted`, icon: Mail },
@@ -28,18 +39,29 @@
 			received: received.get(date) ?? 0, sent: sent.get(date) ?? 0
 		}));
 	});
-	const maximum = $derived(Math.max(1, ...buckets.flatMap((bucket) => [bucket.received, bucket.sent])));
 	const senders = $derived((data?.receiveRatio?.nameRatio ?? []).map((item) => ({ name: item.name, count: Number(item.total) })));
+	const chartConfig = {
+		received: { label: 'Received', color: 'var(--chart-1)' },
+		sent: { label: 'Sent', color: 'var(--chart-2)' }
+	} satisfies Chart.ChartConfig;
 </script>
 
 <section class="min-h-full px-3 pb-10 pt-6 sm:px-6 sm:pt-7 lg:px-8">
-	{#if notice}<p role="alert" class="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{notice}</p>{/if}
 	<div class="mx-auto max-w-[1180px]">
 		<div class="flex flex-wrap items-end justify-between gap-4">
 			<div><h1 class="text-[27px] font-semibold tracking-[-0.055em] sm:text-[30px]">Analytics</h1><p class="mt-1 text-[13px] text-muted-foreground">A workspace-wide view of mailbox activity.</p></div>
-			<Badge variant="outline" class="h-8 rounded-full px-3 text-[10px]">Last 15 days</Badge>
+			<div class="flex items-center gap-2"><Badge variant="outline" class="h-8 rounded-full px-3 text-[10px]">Last 15 days</Badge><Button variant="outline" size="sm" disabled={loading} onclick={() => void loadAnalytics()}>{#if loading}<LoaderCircle class="animate-spin" data-icon="inline-start" />{:else}<RefreshCw data-icon="inline-start" />{/if}Refresh</Button></div>
 		</div>
 
+		{#if loading && !data}
+			<div class="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+				{#each [1, 2, 3, 4] as card (card)}<div class="animate-pulse rounded-xl bg-muted/55 p-4 sm:p-5"><div class="h-3 w-28 rounded bg-muted-foreground/15"></div><div class="mt-5 h-8 w-24 rounded bg-muted-foreground/15"></div><div class="mt-3 h-3 w-36 rounded bg-muted-foreground/10"></div></div>{/each}
+			</div>
+			<div class="mt-4 grid gap-4 xl:grid-cols-[1.5fr_1fr]"><section class="rounded-xl border p-4 sm:p-5"><LoadingState label="Loading message volume…" class="mb-5" /><div class="h-[220px] animate-pulse rounded-lg bg-muted/50"></div></section><section class="rounded-xl border p-4 sm:p-5"><LoadingState label="Loading sender totals…" class="mb-5" /><div class="space-y-4">{#each [1, 2, 3, 4] as row (row)}<div class="h-8 animate-pulse rounded bg-muted/50"></div>{/each}</div></section></div>
+		{:else if !data}
+			<div class="mt-7 rounded-xl border border-destructive/30 bg-destructive/5 p-5"><p role="alert" class="text-xs text-destructive">{notice || 'Analytics could not be loaded.'}</p><Button variant="outline" size="sm" class="mt-4" disabled={loading} onclick={() => void loadAnalytics()}>{#if loading}<LoaderCircle class="animate-spin" data-icon="inline-start" />{/if}Retry</Button></div>
+		{:else}
+			{#if notice}<p role="alert" class="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{notice}</p>{/if}
 		<div class="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
 			{#each summary as item (item.label)}
 				{@const Icon = item.icon}
@@ -54,16 +76,22 @@
 		<div class="mt-4 grid gap-4 xl:grid-cols-[1.5fr_1fr]">
 			<section class="rounded-xl border bg-card p-4 sm:p-5">
 				<div class="flex items-start justify-between gap-3"><div><h2 class="text-xs font-semibold">Message volume</h2><p class="mt-1 text-[10px] text-muted-foreground">Received and sent messages over time</p></div><Badge variant="outline" class="h-5 rounded-full px-2 text-[9px]">All mailboxes</Badge></div>
-				<div class="mt-6 flex h-[210px] items-end gap-2 border-b border-l px-2 sm:gap-4 sm:px-4">
-					{#each buckets as bucket, index (index)}
-						<div class="flex h-full flex-1 items-end justify-center gap-1">
-							<div class="w-2.5 rounded-t bg-primary/80 sm:w-3" title={`${bucket.received} received`} style={`height:${bucket.received / maximum * 100}%`}></div>
-							<div class="hidden w-2.5 rounded-t bg-muted-foreground/25 sm:block sm:w-3" title={`${bucket.sent} sent`} style={`height:${bucket.sent / maximum * 100}%`}></div>
-						</div>
-					{/each}
-				</div>
-				<div class="mt-2 flex justify-between pl-2 text-[9px] text-muted-foreground sm:px-4">{#each buckets as bucket (bucket.label)}<span>{bucket.label}</span>{/each}</div>
-				<div class="mt-4 flex gap-4 text-[9px] text-muted-foreground"><span class="inline-flex items-center gap-1.5"><span class="size-2 rounded-sm bg-primary/80"></span>Received</span><span class="inline-flex items-center gap-1.5"><span class="size-2 rounded-sm bg-muted-foreground/25"></span>Sent</span></div>
+				<Chart.Container config={chartConfig} class="mt-5 h-[220px] w-full aspect-auto sm:h-[270px]">
+					<BarChart
+		data={buckets}
+		xScale={scaleBand().padding(0.25)}
+		x="label"
+						axis="x"
+						seriesLayout="group"
+						series={[
+							{ key: 'received', label: chartConfig.received.label, color: chartConfig.received.color },
+							{ key: 'sent', label: chartConfig.sent.label, color: chartConfig.sent.color }
+						]}
+					>
+						{#snippet tooltip()}<Chart.Tooltip indicator="dot" />{/snippet}
+					</BarChart>
+				</Chart.Container>
+				<div class="mt-4 flex gap-4 text-[9px] text-muted-foreground"><span class="inline-flex items-center gap-1.5"><span class="size-2 rounded-sm bg-chart-1"></span>Received</span><span class="inline-flex items-center gap-1.5"><span class="size-2 rounded-sm bg-chart-2"></span>Sent</span></div>
 			</section>
 
 			<section class="rounded-xl border bg-card p-4 sm:p-5">
@@ -81,5 +109,6 @@
 			<div><p class="text-[11px] font-medium">Need message-level details?</p><p class="mt-1 text-[10px] text-muted-foreground">Review delivery status, recipients, and account activity in All mail.</p></div>
 			<Button href="/all-mail" variant="outline" size="sm" class="rounded-full">Open all mail <ArrowDownRight data-icon="inline-end" /></Button>
 		</div>
+		{/if}
 	</div>
 </section>

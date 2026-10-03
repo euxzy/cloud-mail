@@ -1,10 +1,12 @@
 <script lang="ts">
-	import { ArrowLeft, Download, FileText, Image, Star, Trash2, X } from '@lucide/svelte';
+	import { ArrowLeft, Download, FileText, Image, LoaderCircle, Star, Trash2, X } from '@lucide/svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import * as Avatar from '$lib/components/ui/avatar/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import LoadingState from '$lib/components/LoadingState.svelte';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import { Separator } from '$lib/components/ui/separator/index.js';
 	import { mailMessages, type MailAttachment } from '$lib/mail-data.svelte.js';
 	import { mailAccounts } from '$lib/mail-accounts.svelte.js';
@@ -13,6 +15,7 @@
 	import { hasPermission } from '$lib/permissions.svelte.js';
 	import { deleteApiEmails, fetchApiAllMessages, fetchApiMessage, fetchApiStarredMessage, markApiEmailsRead, setApiEmailStar } from '$lib/api/mail.js';
 	import { assetUrl } from '$lib/api/config.js';
+	import { toast } from 'svelte-sonner';
 
 	const message = $derived(mailMessages.find((item) => item.id === page.params.id) ?? null);
 	const backHref = $derived(
@@ -33,6 +36,8 @@
 	let previewAttachment = $state<MailAttachment | null>(null);
 	let previewUrl = $state('');
 	let loading = $state(false);
+	let savingStar = $state(false);
+	let deletingMessage = $state(false);
 	let loadingMessageId = '';
 	let retryKey = $state(0);
 
@@ -70,18 +75,22 @@
 	});
 
 	async function toggleStar() {
-		if (!message) return;
+		if (!message || savingStar) return;
 		const starred = !message.starred;
-		try { await setApiEmailStar(message.id, starred); message.starred = starred; }
-		catch (error) { actionNotice = error instanceof Error ? error.message : 'Star status could not be changed.'; }
+		savingStar = true;
+		try { await setApiEmailStar(message.id, starred); message.starred = starred; toast.success(starred ? 'Message starred.' : 'Message removed from starred.'); }
+		catch (error) { toast.error(error instanceof Error ? error.message : 'Star status could not be changed.'); }
+		finally { savingStar = false; }
 	}
 
 	async function deleteMessage() {
-		if (!message) return;
+		if (!message || deletingMessage) return;
+		deletingMessage = true;
 		try { await deleteApiEmails([message.id]); }
-		catch (error) { actionNotice = error instanceof Error ? error.message : 'Message could not be deleted.'; return; }
+		catch (error) { toast.error(error instanceof Error ? error.message : 'Message could not be deleted.'); deletingMessage = false; return; }
 		message.deleted = true;
 		deleteOpen = false;
+		toast.success('Message deleted.');
 		goto(backHref);
 	}
 
@@ -110,7 +119,7 @@
 
 	function downloadAttachment(attachment: MailAttachment) {
 		if (!attachment.key) {
-			actionNotice = 'Attachment is unavailable from the mail service.';
+			toast.error('Attachment is unavailable from the mail service.');
 			return;
 		}
 		const link = document.createElement('a');
@@ -132,7 +141,7 @@
 		<div class="flex items-center gap-1">
 			<Button href={backHref} variant="ghost" size="icon-sm" aria-label="Back to mail list"><ArrowLeft data-icon="inline-start" /></Button>
 			{#if message}
-				{#if hasPermission('Delete messages')}<Button variant="ghost" size="icon-sm" aria-label="Delete message" onclick={() => (deleteOpen = true)}><Trash2 data-icon="inline-start" /></Button>{/if}
+				{#if hasPermission('Delete messages')}<Button variant="ghost" size="icon-sm" aria-label="Delete message" disabled={deletingMessage} onclick={() => (deleteOpen = true)}><Trash2 data-icon="inline-start" /></Button>{/if}
 			{/if}
 		</div>
 		{#if message}<span class="text-[10px] tabular-nums text-muted-foreground">{message.date}</span>{/if}
@@ -146,8 +155,8 @@
 					{#if message.label}<Badge variant="secondary" class="h-5 rounded px-1.5 text-[10px] font-medium text-muted-foreground">{message.label}</Badge>{/if}
 					{#if message.status}<Badge variant={message.status === 'bounced' || message.status === 'failed' ? 'destructive' : 'outline'} class="h-5 rounded-full px-2 text-[9px]">{message.status}</Badge>{/if}
 				</div>
-				<Button variant="ghost" size="icon-sm" aria-label={message.starred ? 'Remove star' : 'Add star'} aria-pressed={message.starred} onclick={toggleStar}>
-					<Star fill={message.starred ? 'currentColor' : 'none'} data-icon="inline-start" />
+				<Button variant="ghost" size="icon-sm" aria-label={message.starred ? 'Remove star' : 'Add star'} aria-pressed={message.starred} disabled={savingStar} onclick={toggleStar}>
+					{#if savingStar}<LoaderCircle class="animate-spin" data-icon="inline-start" />{:else}<Star fill={message.starred ? 'currentColor' : 'none'} data-icon="inline-start" />{/if}
 				</Button>
 			</div>
 
@@ -198,36 +207,33 @@
 				<Button variant="outline" class="rounded-full px-4" onclick={reply}><ArrowLeft class="rotate-180" data-icon="inline-start" />Reply</Button>
 				<Button variant="ghost" class="rounded-full px-4 text-muted-foreground" onclick={forward}>Forward</Button>
 			</div>
-			{#if actionNotice}<p role="status" class="mt-3 text-[10px] text-muted-foreground">{actionNotice}</p>{/if}
+			{#if actionNotice}<p role="alert" class="mt-3 text-[10px] text-destructive">{actionNotice}</p>{/if}
 		</article>
 	{:else}
 		<div class="mx-auto max-w-lg py-16 text-center">
-			<h1 class="text-lg font-medium">Message not found</h1>
-			<p class="mt-2 text-xs text-muted-foreground">{loading ? 'Loading message…' : actionNotice || 'This message may have been deleted or is unavailable.'}</p>
+			{#if loading}<div class="flex justify-center"><LoadingState label="Loading message…" /></div>{:else}<h1 class="text-lg font-medium">Message not found</h1><p role="alert" class="mt-2 text-xs text-destructive">{actionNotice || 'This message may have been deleted or is unavailable.'}</p>{/if}
 			<div class="mt-5 flex justify-center gap-2"><Button href={backHref} variant="outline" class="rounded-full">Back to mail</Button>{#if !loading}<Button variant="outline" class="rounded-full" onclick={() => { actionNotice = ''; retryKey += 1; }}>Retry</Button>{/if}</div>
 		</div>
 	{/if}
 </section>
 
 {#if previewAttachment}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/30 p-4" role="presentation">
-		<button class="absolute inset-0" aria-label="Close attachment preview" onclick={closePreview}></button>
-		<div role="dialog" aria-modal="true" aria-labelledby="attachment-title" class="relative z-10 w-full max-w-[640px] overflow-hidden rounded-2xl border bg-background shadow-xl">
-			<header class="flex items-center justify-between border-b px-4 py-3"><div class="min-w-0"><h2 id="attachment-title" class="truncate text-xs font-semibold">{previewAttachment.filename}</h2><p class="mt-0.5 text-[9px] text-muted-foreground">{formatBytes(previewAttachment.size)}</p></div><Button variant="ghost" size="icon-xs" aria-label="Close preview" onclick={closePreview}><X data-icon="inline-start" /></Button></header>
+	<Dialog.Root open={previewAttachment !== null} onOpenChange={(open) => { if (!open) closePreview(); }}>
+		<Dialog.Content showCloseButton={false} class="w-[calc(100vw-2rem)] max-w-[640px] gap-0 overflow-hidden p-0">
+			<Dialog.Header class="flex-row items-center justify-between border-b px-4 py-3"><div class="min-w-0"><Dialog.Title id="attachment-title" class="truncate text-xs font-semibold">{previewAttachment.filename}</Dialog.Title><Dialog.Description class="mt-0.5 text-[9px]">{formatBytes(previewAttachment.size)}</Dialog.Description></div><Button variant="ghost" size="icon-xs" aria-label="Close preview" onclick={closePreview}><X data-icon="inline-start" /></Button></Dialog.Header>
 			<div class="flex min-h-[240px] max-h-[70svh] items-center justify-center overflow-auto bg-muted/20 p-4">
 				{#if previewUrl}<img src={previewUrl} alt={previewAttachment.filename} class="max-h-[62svh] max-w-full object-contain" />{:else}<div class="max-w-[300px] text-center"><FileText class="mx-auto text-muted-foreground" size={28} /><p class="mt-3 text-xs font-medium">Attachment preview is unavailable</p><p class="mt-1 text-[10px] leading-relaxed text-muted-foreground">This file type cannot be previewed here. Download it to open the attachment.</p></div>{/if}
 			</div>
 			<footer class="flex justify-end border-t p-3"><Button variant="outline" size="sm" class="rounded-full" onclick={() => downloadAttachment(previewAttachment!)}><Download data-icon="inline-start" />Download</Button></footer>
-		</div>
-	</div>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}
 
 {#if deleteOpen}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="presentation">
-		<button class="absolute inset-0" aria-label="Close delete confirmation" onclick={() => (deleteOpen = false)}></button>
-			<div role="dialog" aria-modal="true" aria-labelledby="delete-message-title" class="relative z-10 w-full max-w-[380px] rounded-2xl border bg-background p-5 shadow-xl">
-			<h2 id="delete-message-title" class="text-sm font-semibold">Delete this message?</h2><p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">This message will be removed from your mailbox.</p>
-			<div class="mt-5 flex justify-end gap-2"><Button variant="ghost" size="sm" class="rounded-full" onclick={() => (deleteOpen = false)}>Cancel</Button><Button variant="destructive" size="sm" class="rounded-full" onclick={deleteMessage}>Delete message</Button></div>
-		</div>
-	</div>
+	<Dialog.Root bind:open={deleteOpen}>
+		<Dialog.Content class="w-[calc(100vw-2rem)] max-w-[380px] gap-0 p-5">
+			<Dialog.Header><Dialog.Title id="delete-message-title" class="text-sm font-semibold">Delete this message?</Dialog.Title><Dialog.Description class="mt-2 text-[11px] leading-relaxed">This message will be removed from your mailbox.</Dialog.Description></Dialog.Header>
+			<div class="mt-5 flex justify-end gap-2"><Button variant="ghost" size="sm" class="rounded-full" disabled={deletingMessage} onclick={() => (deleteOpen = false)}>Cancel</Button><Button variant="destructive" size="sm" class="rounded-full" disabled={deletingMessage} onclick={deleteMessage}>{#if deletingMessage}<LoaderCircle class="animate-spin" data-icon="inline-start" />{/if}{deletingMessage ? 'Deleting…' : 'Delete message'}</Button></div>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}

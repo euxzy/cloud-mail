@@ -1,9 +1,11 @@
 <script lang="ts">
-	import { ArrowRight, Eye, EyeOff } from '@lucide/svelte';
+	import { ArrowRight, Eye, EyeOff, LoaderCircle } from '@lucide/svelte';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
+	import LoadingState from '$lib/components/LoadingState.svelte';
 	import SelectControl from '$lib/components/SelectControl.svelte';
 	import { apiEnabled } from '$lib/api/client.js';
 	import { bindOAuthUser, loadApiSession, loginApi, loginOAuth } from '$lib/api/session.svelte.js';
@@ -22,6 +24,10 @@
 	let bindCode = $state('');
 	let oauthUserId = $state('');
 	let config = $state<WebsiteConfig>({});
+	let configLoading = $state(true);
+	let signingIn = $state(false);
+	let bindingAccount = $state(false);
+	let authenticatingOAuth = $state(false);
 	const providerOptions = [
 		{ key: 'google', label: 'Google' },
 		{ key: 'github', label: 'GitHub' },
@@ -32,13 +38,13 @@
 	const normalizedDomains = $derived(domainList.map((item) => item.replace(/^@/, '')));
 
 	onMount(() => {
-		if (!apiEnabled) { notice = 'API belum dikonfigurasi. Isi VITE_API_BASE_URL untuk melanjutkan.'; return; }
+		if (!apiEnabled) { notice = 'API belum dikonfigurasi. Isi VITE_API_BASE_URL untuk melanjutkan.'; configLoading = false; return; }
 		void websiteConfig().then((value) => {
 			config = value;
 			loginDomain = value.loginDomain !== 1;
 			domainList = value.domainList ?? [];
 			domainSuffix = domainList[0]?.replace(/^@/, '') ?? '';
-		}).catch((error) => { notice = error instanceof Error ? error.message : 'Konfigurasi API tidak dapat dimuat.'; });
+		}).catch((error) => { notice = error instanceof Error ? error.message : 'Konfigurasi API tidak dapat dimuat.'; }).finally(() => { configLoading = false; });
 		void loadApiSession().then((user) => { if (user) void goto('/inbox'); }).catch(() => undefined);
 		void finishOAuth();
 	});
@@ -49,10 +55,13 @@
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
+		if (signingIn || configLoading) return;
+		signingIn = true;
 		try {
 			await loginApi(fullEmail(loginDomain ? localPart : email), password);
 			void goto('/inbox');
 		} catch (error) { notice = error instanceof Error ? error.message : 'Login gagal.'; }
+		finally { signingIn = false; }
 	}
 
 	function startOAuth(provider: OAuthProvider) {
@@ -74,6 +83,7 @@
 		const code = params.get('code');
 		const provider = params.get('state') || sessionStorage.getItem('oauthProvider');
 		if (!code || !provider || !['linuxdo', 'github', 'google'].includes(provider)) return;
+		authenticatingOAuth = true;
 		sessionStorage.removeItem('oauthProvider');
 		history.replaceState({}, '', `${window.location.origin}/login`);
 		try {
@@ -82,14 +92,18 @@
 			oauthUserId = result.userInfo?.oauthUserId ?? '';
 			bindingOAuth = true;
 		} catch (error) { notice = error instanceof Error ? error.message : 'OAuth login gagal.'; }
+		finally { authenticatingOAuth = false; }
 	}
 
 	async function bindAccount(event: SubmitEvent) {
 		event.preventDefault();
+		if (bindingAccount) return;
+		bindingAccount = true;
 		try {
 			await bindOAuthUser(fullEmail(bindEmail), oauthUserId, bindCode);
 			void goto('/inbox');
 		} catch (error) { notice = error instanceof Error ? error.message : 'OAuth account could not be bound.'; }
+		finally { bindingAccount = false; }
 	}
 </script>
 
@@ -99,11 +113,12 @@
 	<p class="text-xs font-semibold text-primary">Your workspace</p>
 	<h1 class="mt-3 text-[34px] font-semibold tracking-[-0.055em]">Welcome back</h1>
 	<p class="mt-2 text-sm leading-relaxed text-muted-foreground">Sign in with your account email to continue.</p>
+	{#if configLoading || authenticatingOAuth}<div class="mt-4"><LoadingState label={authenticatingOAuth ? 'Signing in with OAuth…' : 'Loading sign-in options…'} /></div>{/if}
 
 	{#if providers.length}
 		<div class="mt-6 grid gap-2" style={`grid-template-columns: repeat(${providers.length}, minmax(0, 1fr))`}>
 			{#each providers as provider}
-				<Button type="button" variant="outline" class="h-10 rounded-lg px-2 text-xs" onclick={() => startOAuth(provider.key)}>{provider.label}</Button>
+				<Button type="button" variant="outline" class="h-10 rounded-lg px-2 text-xs" disabled={configLoading || signingIn} onclick={() => startOAuth(provider.key)}>{provider.label}</Button>
 			{/each}
 		</div>
 		<div class="my-6 flex items-center gap-3 text-xs text-muted-foreground"><span class="h-px flex-1 bg-border"></span><span>or continue with email</span><span class="h-px flex-1 bg-border"></span></div>
@@ -123,7 +138,7 @@
 				</button>
 			</span>
 		</label>
-		<Button type="submit" class="mt-1 h-11 w-full rounded-lg text-sm">Sign in <ArrowRight data-icon="inline-end" /></Button>
+		<Button type="submit" class="mt-1 h-11 w-full rounded-lg text-sm" disabled={configLoading || signingIn}>{#if signingIn}<LoaderCircle class="animate-spin" data-icon="inline-start" />Signing in…{:else}Sign in <ArrowRight data-icon="inline-end" />{/if}</Button>
 		{#if notice}
 			<div class="rounded-lg border bg-muted/30 px-3 py-2.5 text-[10px] leading-relaxed text-muted-foreground" role="status">{notice}</div>
 		{/if}
@@ -136,14 +151,14 @@
 </div>
 
 {#if bindingOAuth}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/25 p-4" role="presentation">
-		<button class="absolute inset-0" aria-label="Close account binding" onclick={() => (bindingOAuth = false)}></button>
-		<form class="relative z-10 w-full max-w-sm space-y-4 rounded-xl border bg-background p-5 shadow-xl" onsubmit={bindAccount}>
-			<h2 class="text-sm font-semibold">Bind an email account</h2>
-			<p class="text-xs text-muted-foreground">This OAuth identity does not have a Cloud Mail account yet.</p>
-			<Input bind:value={bindEmail} type="email" required placeholder="name@domain.com" class="h-10 text-xs" />
-			{#if config.regKey === 0 || config.regKey === 2}<Input bind:value={bindCode} required={config.regKey === 0} placeholder="Invite code" class="h-10 text-xs" />{/if}
-			<Button type="submit" class="w-full">Bind account</Button>
+	<Dialog.Root bind:open={bindingOAuth}>
+		<Dialog.Content class="w-[calc(100vw-2rem)] max-w-sm gap-0 p-5">
+			<Dialog.Header><Dialog.Title class="text-sm font-semibold">Bind an email account</Dialog.Title><Dialog.Description class="text-xs text-muted-foreground">This OAuth identity does not have a Cloud Mail account yet.</Dialog.Description></Dialog.Header>
+		<form class="mt-4 space-y-4" onsubmit={bindAccount}>
+			<Input bind:value={bindEmail} type="email" required placeholder="name@domain.com" class="h-10 text-xs" disabled={bindingAccount} />
+			{#if config.regKey === 0 || config.regKey === 2}<Input bind:value={bindCode} required={config.regKey === 0} placeholder="Invite code" class="h-10 text-xs" disabled={bindingAccount} />{/if}
+			<Button type="submit" class="w-full" disabled={bindingAccount}>{#if bindingAccount}<LoaderCircle class="animate-spin" data-icon="inline-start" />{/if}{bindingAccount ? 'Binding…' : 'Bind account'}</Button>
 		</form>
-	</div>
+		</Dialog.Content>
+	</Dialog.Root>
 {/if}
