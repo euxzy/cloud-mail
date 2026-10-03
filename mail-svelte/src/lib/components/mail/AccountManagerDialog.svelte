@@ -4,17 +4,33 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
+	import { onMount } from 'svelte';
 	import { mailUi } from '$lib/mail-ui.svelte.js';
 	import { mailAccounts } from '$lib/mail-accounts.svelte.js';
-	import { adminRoles, adminUsers } from '$lib/admin-data.svelte.js';
-	import { hasPreviewPermission, previewSession } from '$lib/preview-state.svelte.js';
+	import { hasPermission } from '$lib/permissions.svelte.js';
+	import { websiteConfig } from '$lib/api/config.js';
+	import TurnstileWidget from '$lib/components/TurnstileWidget.svelte';
+	import { addApiAccount, deleteApiAccount, fetchApiAccounts, pinApiAccount, renameApiAccount, setApiAccountAllMail } from '$lib/api/mail.js';
 
 	let addOpen = $state(false);
 	let newEmail = $state('');
 	let notice = $state('');
 	let renameId = $state<number | null>(null);
 	let renameValue = $state('');
-	const ownAccounts = $derived(mailAccounts.filter((account) => (account.ownerEmail ?? 'sarah@cloudmail.id') === previewSession.email));
+	let siteKey = $state('');
+	let verificationRequired = $state(false);
+	let verificationToken = $state('');
+	let accountAddingEnabled = $state(false);
+	const canAddAccount = $derived(accountAddingEnabled && hasPermission('Add mailbox'));
+	const ownAccounts = $derived(mailAccounts);
+
+	onMount(() => {
+		void websiteConfig().then((config) => {
+			siteKey = config.siteKey ?? '';
+			verificationRequired = config.addEmailVerify === 0 || (config.addEmailVerify === 2 && config.addVerifyOpen === true);
+			accountAddingEnabled = config.addEmail === 0 && config.manyEmail === 0;
+		}).catch((error) => { notice = error instanceof Error ? error.message : 'Account settings could not be loaded.'; });
+	});
 
 	function close() {
 		mailUi.accountsOpen = false;
@@ -29,46 +45,79 @@
 		}
 	}
 
-	function addAccount(event: SubmitEvent) {
+	async function refreshAccounts() {
+		const accounts = await fetchApiAccounts();
+		mailAccounts.splice(0, mailAccounts.length, ...accounts);
+	}
+
+	async function addAccount(event: SubmitEvent) {
 		event.preventDefault();
-		const settings = JSON.parse(localStorage.getItem('cloud-mail-system-settings-preview') || '{}') as { allowMailboxAdd?: boolean; multiMailbox?: boolean; minEmailPrefix?: number; emailPrefixFilter?: string; allowDomains?: string };
-		if (!hasPreviewPermission('Add mailbox')) { notice = 'Your role cannot add mailboxes.'; return; }
-		if (settings.allowMailboxAdd === false || (settings.multiMailbox === false && ownAccounts.length > 0)) { notice = 'Mailbox creation is disabled in system settings.'; return; }
-		const user = adminUsers.find((item) => item.email === previewSession.email);
-		const role = adminRoles.find((item) => item.name === user?.role);
-		if (role?.mailboxLimit && ownAccounts.length >= role.mailboxLimit) { notice = 'Your mailbox limit has been reached.'; return; }
+		if (!hasPermission('Add mailbox')) { notice = 'Your role cannot add mailboxes.'; return; }
 		const email = newEmail.trim().toLowerCase();
-		const [prefix, domain] = email.split('@');
-		if (prefix.length < Number(settings.minEmailPrefix ?? 1)) { notice = 'The mailbox prefix is too short.'; return; }
-		if (settings.emailPrefixFilter?.split(/[\n,]/).some((item) => item.trim() && prefix.includes(item.trim().toLowerCase()))) { notice = 'This mailbox prefix is not allowed.'; return; }
-		const allowed = settings.allowDomains?.split(/[\n,]/).map((item) => item.trim().toLowerCase()).filter(Boolean);
-		if (allowed?.length && !allowed.includes(domain)) { notice = 'This domain is not allowed.'; return; }
-		if (role?.allowedDomains?.length && !role.allowedDomains.includes(email.split('@')[1])) { notice = 'This domain is not allowed for your role.'; return; }
-		if (!email || mailAccounts.some((account) => account.email === email)) { notice = 'This mailbox already exists.'; return; }
-		const id = Math.max(0, ...mailAccounts.map((account) => account.id)) + 1;
-		mailAccounts.push({ id, email, ownerEmail: previewSession.email, primary: false, pinned: false, allMail: true });
-		mailUi.currentAccountId = id;
-		if (user) user.mailboxes = ownAccounts.length;
-		newEmail = '';
-		addOpen = false;
-		notice = 'Mailbox added to this preview.';
+		if (verificationRequired && !verificationToken) { notice = 'Complete the human verification first.'; return; }
+		try {
+			await addApiAccount(email, verificationToken);
+			await refreshAccounts();
+			const added = mailAccounts.find((account) => account.email.toLowerCase() === email);
+			if (added) mailUi.currentAccountId = added.id;
+			newEmail = '';
+			verificationToken = '';
+			addOpen = false;
+			notice = 'Mailbox added.';
+		} catch (error) {
+			notice = error instanceof Error ? error.message : 'Mailbox could not be added.';
+		}
 	}
 
-	function saveName() {
+	async function saveName() {
 		const account = mailAccounts.find((item) => item.id === renameId);
-		if (account && renameValue.trim()) account.name = renameValue.trim();
+		if (account && renameValue.trim()) {
+			try {
+				await renameApiAccount(account.id, renameValue.trim());
+				await refreshAccounts();
+				notice = 'Mailbox name updated.';
+			} catch (error) {
+				notice = error instanceof Error ? error.message : 'Mailbox name could not be updated.';
+				return;
+			}
+		}
 		renameId = null;
-		notice = 'Mailbox name updated.';
 	}
 
-	function removeAccount(id: number) {
-		const index = mailAccounts.findIndex((item) => item.id === id && !item.primary);
-		if (index < 0) return;
-		mailAccounts.splice(index, 1);
-		if (mailUi.currentAccountId === id) mailUi.currentAccountId = ownAccounts[0]?.id ?? 0;
-		const user = adminUsers.find((item) => item.email === previewSession.email);
-		if (user) user.mailboxes = ownAccounts.length;
-		notice = 'Mailbox removed.';
+	async function removeAccount(id: number) {
+		try {
+			await deleteApiAccount(id);
+			await refreshAccounts();
+			if (mailUi.currentAccountId === id) mailUi.currentAccountId = mailAccounts.find((account) => account.primary)?.id ?? mailAccounts[0]?.id ?? 0;
+			notice = 'Mailbox removed.';
+		} catch (error) {
+			notice = error instanceof Error ? error.message : 'Mailbox could not be removed.';
+		}
+	}
+
+	async function toggleAllMail(accountId: number, checked: boolean) {
+		const account = mailAccounts.find((item) => item.id === accountId);
+		if (!account) return;
+		if (account.allMail === checked) return;
+		try {
+			await setApiAccountAllMail(accountId);
+			await refreshAccounts();
+			notice = 'Mailbox receive filter updated.';
+		} catch (error) {
+			notice = error instanceof Error ? error.message : 'Mailbox filter could not be updated.';
+		}
+	}
+
+	async function togglePinned(accountId: number) {
+		const account = mailAccounts.find((item) => item.id === accountId);
+		if (!account) return;
+		try {
+			await pinApiAccount(accountId);
+			await refreshAccounts();
+			notice = 'Mailbox moved to the top.';
+		} catch (error) {
+			notice = error instanceof Error ? error.message : 'Mailbox could not be reordered.';
+		}
 	}
 </script>
 
@@ -95,13 +144,13 @@
 								{#if account.name}<span class="mt-1 block truncate text-[9px] text-muted-foreground">{account.email}</span>{/if}
 							</button>
 						<Button variant="ghost" size="icon-xs" aria-label="Copy mailbox address" onclick={() => copyAddress(account.email)}><Copy data-icon="inline-start" /></Button>
-						<Button variant="ghost" size="icon-xs" aria-label={account.pinned ? 'Unpin mailbox' : 'Pin mailbox'} aria-pressed={account.pinned} onclick={() => (account.pinned = !account.pinned)}><Pin data-icon="inline-start" /></Button>
+						<Button variant="ghost" size="icon-xs" aria-label="Move mailbox to top" aria-pressed={account.pinned} onclick={() => { void togglePinned(account.id); }}><Pin data-icon="inline-start" /></Button>
 						<Button variant="ghost" size="xs" onclick={() => { renameId = account.id; renameValue = account.name || ''; }}>Rename</Button>
-						{#if !account.primary && hasPreviewPermission('Remove mailbox')}<Button variant="ghost" size="icon-xs" aria-label="Remove mailbox" onclick={() => removeAccount(account.id)}><Trash2 data-icon="inline-start" /></Button>{/if}
+						{#if !account.primary && hasPermission('Remove mailbox')}<Button variant="ghost" size="icon-xs" aria-label="Remove mailbox" onclick={() => removeAccount(account.id)}><Trash2 data-icon="inline-start" /></Button>{/if}
 					</div>
-					{#if renameId === account.id}<form class="mt-3 flex gap-2" onsubmit={(event) => { event.preventDefault(); saveName(); }}><Input bind:value={renameValue} placeholder="Mailbox display name" class="h-8 min-w-0 text-xs" /><Button type="submit" size="xs">Save</Button></form>{/if}
+					{#if renameId === account.id}<form class="mt-3 flex gap-2" onsubmit={(event) => { event.preventDefault(); void saveName(); }}><Input bind:value={renameValue} placeholder="Mailbox display name" class="h-8 min-w-0 text-xs" /><Button type="submit" size="xs">Save</Button></form>{/if}
 					<label class="mt-3 flex items-center gap-2 text-[10px] text-muted-foreground">
-						<Switch bind:checked={account.allMail} aria-label={`Include all mail for ${account.email}`} size="sm" />
+						<Switch checked={account.allMail} onCheckedChange={(checked) => { void toggleAllMail(account.id, checked); }} aria-label={`Include all mail for ${account.email}`} size="sm" />
 						Include all received mail from this mailbox
 					</label>
 				</div>
@@ -112,11 +161,12 @@
 					<Input bind:value={newEmail} type="email" required placeholder="mailbox@example.com" class="h-9 text-xs" />
 					<Button type="submit" size="sm" class="shrink-0 rounded-full">Add</Button>
 				</form>
+				{#if verificationRequired && siteKey}<TurnstileWidget {siteKey} onToken={(token) => (verificationToken = token)} />{/if}
 			{/if}
 		</div>
 		<footer class="flex items-center justify-between border-t px-5 py-3">
 			<p class="text-[10px] text-muted-foreground" role="status">{notice || `${ownAccounts.length} mailboxes`}</p>
-			{#if hasPreviewPermission('Add mailbox')}<Button variant="outline" size="sm" class="rounded-full" onclick={() => (addOpen = !addOpen)}><Plus data-icon="inline-start" />Add mailbox</Button>{/if}
+		{#if canAddAccount}<Button variant="outline" size="sm" class="rounded-full" onclick={() => (addOpen = !addOpen)}><Plus data-icon="inline-start" />Add mailbox</Button>{/if}
 		</footer>
 	</div>
 </div>

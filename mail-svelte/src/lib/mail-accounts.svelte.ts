@@ -8,8 +8,4 @@ export type MailAccount = {
 	allMail: boolean;
 };
 
-export const mailAccounts = $state<MailAccount[]>([
-	{ id: 1, email: 'sarah@cloudmail.id', ownerEmail: 'sarah@cloudmail.id', primary: true, pinned: true, allMail: false },
-	{ id: 2, email: 'support@cloudmail.id', ownerEmail: 'sarah@cloudmail.id', primary: false, pinned: false, allMail: true },
-	{ id: 3, email: 'alerts@cloudmail.id', ownerEmail: 'sarah@cloudmail.id', primary: false, pinned: false, allMail: true }
-]);
+export const mailAccounts = $state<MailAccount[]>([]);

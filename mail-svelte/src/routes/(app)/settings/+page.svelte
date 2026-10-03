@@ -4,8 +4,9 @@
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Separator } from '$lib/components/ui/separator/index.js';
 	import { goto } from '$app/navigation';
-	import { adminUsers } from '$lib/admin-data.svelte.js';
-	import { persistPreviewData, previewSession, renamePreviewProfile, setPreviewPassword, signOutPreview } from '$lib/preview-state.svelte.js';
+	import { apiRequest } from '$lib/api/client.js';
+	import { apiRoleName, apiUser, clearApiSession, fetchApiUser } from '$lib/api/session.svelte.js';
+	import { renameApiAccount } from '$lib/api/mail.js';
 
 	let editName = $state(false);
 	let draftName = $state('');
@@ -15,30 +16,35 @@
 	let confirmPassword = $state('');
 	let notice = $state('');
 
-	function saveName() {
-		if (!draftName.trim()) return;
-		renamePreviewProfile(draftName.trim());
-		editName = false;
-		notice = 'Profile name saved.';
+	async function saveName() {
+		if (!draftName.trim() || !apiUser.value?.account?.accountId) return;
+		try {
+			await renameApiAccount(apiUser.value.account.accountId, draftName.trim());
+			await fetchApiUser();
+			editName = false;
+			notice = 'Profile name saved.';
+		} catch (error) { notice = error instanceof Error ? error.message : 'Profile name could not be updated.'; }
 	}
 
 	async function changePassword(event: SubmitEvent) {
 		event.preventDefault();
 		if (newPassword.length < 6) { notice = 'Use at least 6 characters for the new password.'; return; }
 		if (newPassword !== confirmPassword) { notice = 'The passwords do not match.'; return; }
-		await setPreviewPassword(previewSession.email, newPassword);
-		passwordOpen = false;
-		newPassword = '';
-		confirmPassword = '';
-		notice = 'Password changed for this local account.';
+		try {
+			await apiRequest('/my/resetPassword', { method: 'PUT', body: { password: newPassword } });
+			passwordOpen = false;
+			newPassword = '';
+			confirmPassword = '';
+			notice = 'Password changed.';
+		} catch (error) { notice = error instanceof Error ? error.message : 'Password could not be changed.'; }
 	}
 
 	async function deleteAccount() {
-		const user = adminUsers.find((item) => item.email === previewSession.email);
-		if (user) user.status = 'Deleted';
-		await persistPreviewData();
-		signOutPreview();
-		void goto('/login');
+		try {
+			await apiRequest('/my/delete', { method: 'DELETE' });
+			clearApiSession();
+			void goto('/login');
+		} catch (error) { notice = error instanceof Error ? error.message : 'Account could not be deleted.'; }
 	}
 </script>
 
@@ -57,9 +63,9 @@
 					<div><h2 class="text-sm font-semibold">Profile</h2><p class="mt-1 text-[11px] text-muted-foreground">Your identity in the Cloud Mail workspace.</p></div>
 					<Separator class="my-4" />
 					<div class="space-y-4">
-						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Display name</span><div class="flex min-w-0 items-center gap-2">{#if editName}<Input bind:value={draftName} class="h-9 max-w-[320px] text-xs" />{:else}<span class="truncate text-xs">{previewSession.name}</span>{/if}{#if editName}<Button size="xs" onclick={saveName}>Save</Button><Button variant="ghost" size="xs" onclick={() => (editName = false)}>Cancel</Button>{:else}<Button variant="ghost" size="icon-xs" aria-label="Edit display name" onclick={() => { draftName = previewSession.name; editName = true; }}><Pencil data-icon="inline-start" /></Button>{/if}</div></div>
-						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Email address</span><span class="truncate text-xs text-muted-foreground">{previewSession.email}</span></div>
-						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Account role</span><span class="text-xs">{previewSession.role}</span></div>
+						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Display name</span><div class="flex min-w-0 items-center gap-2">{#if editName}<Input bind:value={draftName} class="h-9 max-w-[320px] text-xs" />{:else}<span class="truncate text-xs">{apiUser.value?.name || apiUser.value?.email}</span>{/if}{#if editName}<Button size="xs" onclick={() => { void saveName(); }}>Save</Button><Button variant="ghost" size="xs" onclick={() => (editName = false)}>Cancel</Button>{:else}<Button variant="ghost" size="icon-xs" aria-label="Edit display name" onclick={() => { draftName = apiUser.value?.name || ''; editName = true; }}><Pencil data-icon="inline-start" /></Button>{/if}</div></div>
+						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Email address</span><span class="truncate text-xs text-muted-foreground">{apiUser.value?.email}</span></div>
+						<div class="grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)] sm:items-center"><span class="text-[11px] font-medium">Account role</span><span class="text-xs">{apiRoleName()}</span></div>
 					</div>
 				</section>
 
@@ -98,7 +104,7 @@
 	<div class="fixed inset-0 z-50 flex items-center justify-center bg-foreground/20 p-4" role="presentation">
 		<button class="absolute inset-0" aria-label="Close delete account dialog" onclick={() => (deleteOpen = false)}></button>
 		<div role="dialog" aria-modal="true" aria-labelledby="delete-title" class="relative z-10 w-full max-w-[400px] rounded-2xl border bg-background p-5 shadow-xl">
-			<h2 id="delete-title" class="text-sm font-semibold">Delete your account?</h2><p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Your local account will be deactivated and signed out.</p>
+			<h2 id="delete-title" class="text-sm font-semibold">Delete your account?</h2><p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">Your account and connected mailboxes will be removed.</p>
 			<div class="mt-5 flex justify-end gap-2"><Button variant="ghost" size="sm" class="rounded-full" onclick={() => (deleteOpen = false)}>Cancel</Button><Button variant="destructive" size="sm" class="rounded-full" onclick={deleteAccount}>Continue</Button></div>
 		</div>
 	</div>

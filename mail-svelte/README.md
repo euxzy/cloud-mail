@@ -17,6 +17,16 @@ pnpm install
 pnpm run dev
 ```
 
+## Worker API
+
+Set `VITE_API_BASE_URL` in `.env` to the Worker API base, including `/api`:
+
+```sh
+VITE_API_BASE_URL=http://127.0.0.1:8787/api
+```
+
+The Svelte app requires this value to connect to the Worker. Sign in, registration, mailbox accounts and messages, compose/send, profile and security settings, analytics, all-mail, users, roles, invite codes, and system settings use the Worker API. Requests use the browser's native `fetch` API and send the JWT in the `Authorization` header. Mail folders load 50 messages at a time with cursor pagination. Draft text and draft attachments are kept in browser storage, matching the Vue app's local draft behavior. There is no local preview-data fallback.
+
 ## Check and build
 
 ```sh
@@ -38,4 +48,4 @@ The static output is written to `build/`. The existing `mail-worker` deployment 
 - `/system-settings` registration, mail, login, and OAuth settings
 - `/login` and `/register` authentication screens
 
-The current pages use local sample data. Authentication, OAuth, settings persistence, and email delivery are not connected to the Worker API yet.
+OAuth sign-in and account binding, message attachments, and administrative settings use the Worker API. Drafts remain in browser storage because the Worker does not expose a draft endpoint.

@@ -2,12 +2,14 @@
 	import { ArrowDown, ArrowUp, CheckCheck, CornerUpLeft, Forward, RefreshCw, Search, Star, Trash2 } from '@lucide/svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import { Switch } from '$lib/components/ui/switch/index.js';
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import * as Empty from '$lib/components/ui/empty/index.js';
 	import { mailMessages, type Folder, type MailMessage } from '$lib/mail-data.svelte.js';
 	import { mailUi, showComposer } from '$lib/mail-ui.svelte.js';
-	import { mailAccounts } from '$lib/mail-accounts.svelte.js';
-	import { hasPreviewPermission, previewSession } from '$lib/preview-state.svelte.js';
+	import { hasPermission } from '$lib/permissions.svelte.js';
+	import { goto } from '$app/navigation';
+	import { deleteApiEmails, markApiEmailsRead, setApiEmailStar } from '$lib/api/mail.js';
+	import { deleteDrafts } from '$lib/draft-store.js';
 
 	type Props = { folder: Folder };
 	let { folder }: Props = $props();
@@ -15,50 +17,57 @@
 	let newestFirst = $state(true);
 	let selectedIds = $state<string[]>([]);
 	let context = $state<{ id: string; x: number; y: number } | null>(null);
-	let visibleLimit = $state(30);
-	let loadMoreSentinel = $state<HTMLDivElement | null>(null);
+	let actionNotice = $state('');
 	const folderTitle = $derived(
 		({ inbox: 'Inbox', starred: 'Starred', sent: 'Sent', drafts: 'Drafts' } as Record<Folder, string>)[folder]
 	);
-	const unreadCount = $derived(
-		mailMessages.filter((message) => message.folder === 'inbox' && !message.deleted && !message.read && !message.archived && (message.recipients ?? []).some((email) => mailAccounts.some((account) => account.ownerEmail === previewSession.email && account.email === email))).length
-	);
+	const unreadCount = $derived(mailMessages.filter((message) => message.folder === 'inbox' && !message.deleted && !message.read).length);
 	const filteredMessages = $derived.by(() => {
 		const query = mailUi.query.trim().toLowerCase();
-		const currentAccount = mailAccounts.find((account) => account.id === mailUi.currentAccountId);
-		const ownAddresses = mailAccounts.filter((account) => account.ownerEmail === previewSession.email).map((account) => account.email);
 		const filtered = mailMessages.filter((message) => {
 			if (message.deleted) return false;
-			const inFolder = folder === 'starred'
-				? message.starred && !message.archived
-				: message.folder === folder && (folder !== 'inbox' || !message.archived);
+			const inFolder = folder === 'starred' ? message.starred : message.folder === folder;
 			const matchesQuery = !query || `${message.from} ${message.address} ${message.subject} ${message.preview} ${(message.recipients ?? []).join(' ')}`.toLowerCase().includes(query);
-			const addresses = currentAccount?.allMail ? ownAddresses : [currentAccount?.email ?? previewSession.email];
-			const matchesAccount = folder === 'inbox'
-				? (message.recipients ?? []).some((email) => addresses.includes(email))
-				: folder === 'starred'
-					? ownAddresses.includes(message.address) || (message.recipients ?? []).some((email) => ownAddresses.includes(email))
-					: addresses.includes(message.address);
-			return inFolder && matchesAccount && matchesQuery && (!unreadOnly || !message.read);
+			return inFolder && matchesQuery && (!unreadOnly || !message.read);
 		});
 		return newestFirst ? filtered : [...filtered].reverse();
 	});
-	const visibleMessages = $derived(filteredMessages.slice(0, visibleLimit));
-	const allSelected = $derived(visibleMessages.length > 0 && visibleMessages.every((message) => selectedIds.includes(message.id)));
-
-	$effect(() => { folder; mailUi.query; unreadOnly; newestFirst; visibleLimit = 30; });
+	const visibleMessages = $derived(filteredMessages);
+	const selectedVisibleCount = $derived(visibleMessages.filter((message) => selectedIds.includes(message.id)).length);
+	const allSelected = $derived(visibleMessages.length > 0 && selectedVisibleCount === visibleMessages.length);
+	const someSelected = $derived(selectedVisibleCount > 0 && !allSelected);
+	const canDelete = $derived(hasPermission(folder === 'drafts' ? 'Send email' : 'Delete messages'));
 	$effect(() => {
-		if (!loadMoreSentinel) return;
-		const observer = new IntersectionObserver((entries) => {
-			if (entries[0]?.isIntersecting) visibleLimit = Math.min(filteredMessages.length, visibleLimit + 30);
-		});
-		observer.observe(loadMoreSentinel);
-		return () => observer.disconnect();
+		folder;
+		mailUi.currentAccountId;
+		mailUi.mailboxPage;
+		mailUi.refreshKey;
+		selectedIds = [];
 	});
 
-	function toggleStar(id: string) {
+	function previousPage() {
+		if (mailUi.mailboxPage <= 1 || mailUi.mailboxLoading) return;
+		selectedIds = [];
+		mailUi.mailboxPage -= 1;
+	}
+
+	function nextPage() {
+		if (!mailUi.mailboxHasMore || mailUi.mailboxLoading) return;
+		selectedIds = [];
+		mailUi.mailboxPage += 1;
+	}
+
+	async function toggleStar(id: string) {
 		const message = mailMessages.find((item) => item.id === id);
-		if (message) message.starred = !message.starred;
+		if (!message) return;
+		actionNotice = '';
+		const starred = !message.starred;
+		try {
+			await setApiEmailStar(id, starred);
+			message.starred = starred;
+		} catch (error) {
+			actionNotice = error instanceof Error ? error.message : 'Star status could not be changed.';
+		}
 	}
 
 	function toggleSelected(id: string) {
@@ -74,20 +83,30 @@
 		}
 	}
 
-	function markSelectedRead() {
+	async function markSelectedRead() {
+		const ids = [...selectedIds];
+		actionNotice = '';
+		try { await markApiEmailsRead(ids); }
+		catch (error) { actionNotice = error instanceof Error ? error.message : 'Messages could not be marked as read.'; return; }
 		for (const message of mailMessages) {
-			if (selectedIds.includes(message.id)) message.read = true;
+			if (ids.includes(message.id)) message.read = true;
 		}
 		selectedIds = [];
 	}
 
-	function deleteSelected() {
-		if (!hasPreviewPermission('Delete messages')) return;
-		for (const message of mailMessages) if (selectedIds.includes(message.id)) message.deleted = true;
+	async function deleteSelected() {
+		if (!canDelete) return;
+		const ids = [...selectedIds];
+		actionNotice = '';
+		try {
+			if (folder === 'drafts') await deleteDrafts(ids);
+			else await deleteApiEmails(ids);
+		} catch (error) { actionNotice = error instanceof Error ? error.message : 'Messages could not be deleted.'; return; }
+		for (const message of mailMessages) if (ids.includes(message.id)) message.deleted = true;
 		selectedIds = [];
 	}
 
-	function openMessage(event: MouseEvent, message: MailMessage) {
+	async function openMessage(event: MouseEvent, message: MailMessage) {
 		if (folder === 'drafts') {
 			event.preventDefault();
 			showComposer(
@@ -98,7 +117,36 @@
 			);
 			return;
 		}
+		if (folder === 'inbox' && !message.read) {
+			if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+			event.preventDefault();
+			actionNotice = '';
+			try { await markApiEmailsRead([message.id]); message.read = true; }
+			catch (error) { actionNotice = error instanceof Error ? error.message : 'Message could not be marked as read.'; return; }
+			await goto(`/mail/${message.id}?from=${folder}`);
+		}
+	}
+
+	async function markContextRead(message: MailMessage) {
+		try { await markApiEmailsRead([message.id]); }
+		catch (error) { actionNotice = error instanceof Error ? error.message : 'Message could not be marked as read.'; return; }
 		message.read = true;
+		context = null;
+	}
+
+	async function deleteContextMessage(message: MailMessage) {
+		try {
+			if (folder === 'drafts') await deleteDrafts([message.id]);
+			else await deleteApiEmails([message.id]);
+		}
+		catch (error) { actionNotice = error instanceof Error ? error.message : 'Message could not be deleted.'; return; }
+		message.deleted = true;
+		context = null;
+	}
+
+	async function toggleContextStar(message: MailMessage) {
+		await toggleStar(message.id);
+		if (!actionNotice) context = null;
 	}
 
 	function openContext(event: MouseEvent, message: MailMessage) {
@@ -125,11 +173,12 @@
 	}
 
 	function statusLabel(message: MailMessage) {
-		return ({ queued: 'Queued', delivered: 'Delivered', bounced: 'Bounced', complained: 'Complaint', delayed: 'Delayed' } as const)[message.status ?? 'delivered'];
+		return ({ sent: 'Sent', delivered: 'Delivered', bounced: 'Bounced', complained: 'Complaint', delayed: 'Delayed', failed: 'Failed', 'no-recipient': 'No recipient' } as const)[message.status ?? 'delivered'];
 	}
 </script>
 
 <section class="min-h-full px-3 pb-8 pt-6 sm:px-6 sm:pt-7 lg:px-8">
+	{#if actionNotice}<p role="status" class="mb-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{actionNotice}</p>{/if}
 	<div class="flex items-center justify-between gap-3 pb-6">
 		<div class="min-w-0">
 			<div class="flex items-center gap-2.5">
@@ -149,21 +198,21 @@
 			<Button variant="ghost" size="sm" aria-pressed={unreadOnly} class="rounded-lg px-3 text-xs {unreadOnly ? 'bg-secondary font-semibold text-secondary-foreground hover:bg-secondary' : 'text-muted-foreground'}" onclick={() => (unreadOnly = true)}>Unread</Button>
 		</div>
 		<div class="flex items-center gap-1">
-			<span class="px-2 text-[11px] tabular-nums text-muted-foreground">{filteredMessages.length} messages</span>
+			<span class="px-2 text-[11px] tabular-nums text-muted-foreground">{filteredMessages.length} messages on this page</span>
 			<Button variant="ghost" size="icon-sm" aria-label={newestFirst ? 'Sort oldest first' : 'Sort newest first'} onclick={() => (newestFirst = !newestFirst)}>
 				{#if newestFirst}<ArrowDown data-icon="inline-start" />{:else}<ArrowUp data-icon="inline-start" />{/if}
 			</Button>
-			<Button variant="ghost" size="icon-sm" aria-label="Refresh message list" onclick={() => { selectedIds = []; unreadOnly = false; }}><RefreshCw data-icon="inline-start" /></Button>
+			<Button variant="ghost" size="icon-sm" aria-label="Refresh message list" onclick={() => { selectedIds = []; unreadOnly = false; mailUi.refreshKey += 1; }}><RefreshCw data-icon="inline-start" /></Button>
 		</div>
 	</div>
 
 	{#if visibleMessages.length}
 		<div class="flex min-h-11 flex-wrap items-center justify-between gap-2 border-b px-2 py-1.5 text-[11px]">
-			<label class="flex items-center gap-2 text-muted-foreground"><Switch checked={allSelected} onCheckedChange={toggleAllVisible} aria-label="Select all visible messages" size="sm" />Select all</label>
+			<div class="flex items-center gap-2 text-muted-foreground"><Checkbox checked={allSelected} indeterminate={someSelected} onCheckedChange={toggleAllVisible} aria-label="Select all messages on this page" /><span>Select all on this page</span></div>
 			{#if selectedIds.length}
 				<div class="flex flex-wrap items-center gap-1.5"><span class="mr-1 text-muted-foreground">{selectedIds.length} selected</span>
-					{#if folder === 'inbox'}<Button variant="ghost" size="xs" class="text-muted-foreground" onclick={markSelectedRead}><CheckCheck data-icon="inline-start" />Mark read</Button>{/if}
-					{#if hasPreviewPermission('Delete messages')}<Button variant="ghost" size="xs" class="text-destructive" onclick={deleteSelected}><Trash2 data-icon="inline-start" />Delete</Button>{/if}
+					{#if folder === 'inbox'}<Button variant="ghost" size="xs" class="text-muted-foreground" onclick={() => { void markSelectedRead(); }}><CheckCheck data-icon="inline-start" />Mark read</Button>{/if}
+					{#if canDelete}<Button variant="ghost" size="xs" class="text-destructive" onclick={() => { void deleteSelected(); }}><Trash2 data-icon="inline-start" />Delete</Button>{/if}
 				</div>
 			{/if}
 		</div>
@@ -171,9 +220,9 @@
 			{#each visibleMessages as message (message.id)}
 				<div role="group" class="group relative flex items-start gap-1.5 rounded-lg px-1 transition-colors hover:bg-muted/65 sm:items-center sm:gap-2 {message.read ? '' : 'bg-secondary/20'}" oncontextmenu={(event) => openContext(event, message)}>
 					{#if !message.read}<span class="absolute bottom-3 left-0 top-3 w-[3px] rounded-full bg-primary"></span>{/if}
-					<Switch checked={selectedIds.includes(message.id)} onCheckedChange={() => toggleSelected(message.id)} class="ml-2 mt-[17px] shrink-0 sm:mt-0" aria-label={`Select ${message.subject}`} size="sm" />
+					<Checkbox checked={selectedIds.includes(message.id)} onCheckedChange={() => toggleSelected(message.id)} class="ml-2 mt-[17px] shrink-0 sm:mt-0" aria-label={`Select ${message.subject}`} />
 					{#if folder !== 'drafts'}
-						<Button variant="ghost" size="icon-sm" class="mt-2 shrink-0 text-muted-foreground sm:mt-0" aria-label={message.starred ? 'Remove star' : 'Add star'} aria-pressed={message.starred} onclick={() => toggleStar(message.id)}>
+						<Button variant="ghost" size="icon-sm" class="mt-2 shrink-0 text-muted-foreground sm:mt-0" aria-label={message.starred ? 'Remove star' : 'Add star'} aria-pressed={message.starred} onclick={() => { void toggleStar(message.id); }}>
 							<Star fill={message.starred ? 'currentColor' : 'none'} data-icon="inline-start" />
 						</Button>
 					{/if}
@@ -195,7 +244,8 @@
 				</div>
 			{/each}
 		</div>
-		<div bind:this={loadMoreSentinel} class="h-4" aria-hidden="true"></div>
+	{:else if mailUi.mailboxLoading}
+		<p role="status" class="py-12 text-center text-xs text-muted-foreground">Loading emails…</p>
 	{:else}
 		<Empty.Root class="min-h-[280px] border-0">
 			<Empty.Media variant="icon"><Search /></Empty.Media>
@@ -205,13 +255,20 @@
 			</Empty.Header>
 		</Empty.Root>
 	{/if}
+	{#if mailUi.mailboxPage > 1 || mailUi.mailboxHasMore}
+		<div class="mt-5 flex items-center justify-between gap-3 border-t px-1 pt-4">
+			<Button variant="outline" size="sm" disabled={mailUi.mailboxPage <= 1 || mailUi.mailboxLoading} onclick={previousPage}>Previous</Button>
+			<span class="text-[11px] tabular-nums text-muted-foreground">Page {mailUi.mailboxPage}</span>
+			<Button variant="outline" size="sm" disabled={!mailUi.mailboxHasMore || mailUi.mailboxLoading} onclick={nextPage}>Next</Button>
+		</div>
+	{/if}
 </section>
 
 {#if context}
 	{@const target = mailMessages.find((message) => message.id === context?.id)}
 	<div class="fixed inset-0 z-40" role="presentation"><button class="absolute inset-0 h-full w-full cursor-default" aria-label="Close message menu" onclick={() => (context = null)}></button>{#if target}<div class="fixed z-50 w-[195px] rounded-xl border bg-popover p-1.5 shadow-xl" style={`left:${context.x}px;top:${context.y}px`}>
-		{#if folder === 'inbox'}<button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] hover:bg-muted" onclick={() => { target.read = true; context = null; }}><CheckCheck size={14} />Mark as read</button>{/if}
-		{#if folder !== 'drafts' && hasPreviewPermission('Send email')}<button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] hover:bg-muted" onclick={() => replyTo(target)}><CornerUpLeft size={14} />Reply</button><button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] hover:bg-muted" onclick={() => forwardMessage(target)}><Forward size={14} />Forward</button>{/if}{#if folder !== 'drafts'}<button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] hover:bg-muted" onclick={() => { target.starred = !target.starred; context = null; }}><Star size={14} />{target.starred ? 'Remove star' : 'Star'}</button>{/if}
-		{#if hasPreviewPermission('Delete messages')}<button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] text-destructive hover:bg-muted" onclick={() => { target.deleted = true; context = null; }}><Trash2 size={14} />Delete</button>{/if}
+		{#if folder === 'inbox'}<button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] hover:bg-muted" onclick={() => { void markContextRead(target); }}><CheckCheck size={14} />Mark as read</button>{/if}
+		{#if folder !== 'drafts' && hasPermission('Send email')}<button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] hover:bg-muted" onclick={() => replyTo(target)}><CornerUpLeft size={14} />Reply</button><button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] hover:bg-muted" onclick={() => forwardMessage(target)}><Forward size={14} />Forward</button>{/if}{#if folder !== 'drafts'}<button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] hover:bg-muted" onclick={() => { void toggleContextStar(target); }}><Star size={14} />{target.starred ? 'Remove star' : 'Star'}</button>{/if}
+		{#if canDelete}<button type="button" class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[11px] text-destructive hover:bg-muted" onclick={() => { void deleteContextMessage(target); }}><Trash2 size={14} />Delete</button>{/if}
 	</div>{/if}</div>
 {/if}

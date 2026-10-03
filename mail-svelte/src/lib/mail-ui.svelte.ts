@@ -6,7 +6,12 @@ export const mailUi = $state({
 	composeSubject: '',
 	composeBody: '',
 	composeDraftId: '',
-	currentAccountId: 1
+	currentAccountId: 1,
+	refreshKey: 0,
+	mailboxPage: 1,
+	mailboxPageCursors: [0] as number[],
+	mailboxHasMore: false,
+	mailboxLoading: false
 });
 
 export function showComposer(to = '', subject = '', body = '', draftId = '') {

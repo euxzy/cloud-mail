@@ -12,17 +12,26 @@
 	import Brand from '$lib/components/mail/Brand.svelte';
 	import { mailUi, showComposer } from '$lib/mail-ui.svelte.js';
 	import { mailAccounts } from '$lib/mail-accounts.svelte.js';
-	import { adminUsers } from '$lib/admin-data.svelte.js';
-	import { hasPreviewPermission, hydratePreviewData, loadPreviewSession, persistPreviewData, previewSession, restorePreviewAttachments, signOutPreview, syncPreviewSession } from '$lib/preview-state.svelte.js';
+	import { mailMessages } from '$lib/mail-data.svelte.js';
+	import { apiEnabled } from '$lib/api/client.js';
+	import { apiRoleName, apiUser, loadApiSession, logoutApi } from '$lib/api/session.svelte.js';
+	import { websiteConfig } from '$lib/api/config.js';
+	import { fetchApiAccounts, fetchApiMailbox } from '$lib/api/mail.js';
+	import { hasPermission } from '$lib/permissions.svelte.js';
+	import { loadDrafts } from '$lib/draft-store.js';
 
 	let { children } = $props();
 	let menuOpen = $state(false);
 	let profileOpen = $state(false);
 	let noticeOpen = $state(false);
-	let announcement = $state({ enabled: true, title: 'Welcome to the new Cloud Mail workspace', body: 'Your mailbox, delivery tools, and account settings are coming together in one place.', position: 'top-right', duration: 5000 });
+	let announcement = $state({ enabled: false, title: '', body: '', position: 'top-right', duration: 0, width: 400, offset: 0, type: 'info' });
 	let darkMode = $state(false);
 	let dataReady = $state(false);
+	let apiNotice = $state('');
 	let mainElement: HTMLElement;
+	let mailboxRequestId = 0;
+	let lastMailboxKey = '';
+	let lastMailboxFetchKey = '';
 
 	const title = $derived.by(() => {
 		const path = page.url.pathname;
@@ -35,66 +44,144 @@
 		};
 		return routeTitle[path.split('/')[1] || 'inbox'] ?? 'Inbox';
 	});
+	const userName = $derived(apiUser.value?.name || apiUser.value?.email || 'Cloud Mail');
+	const userInitials = $derived(userName.split(/[\s@]+/).filter(Boolean).map((part) => part[0]).slice(0, 2).join('').toUpperCase() || 'CM');
 
-	function openComposer() {
-		showComposer();
-		menuOpen = false;
-	}
-
-	function openAccounts() {
-		mailUi.accountsOpen = true;
-		menuOpen = false;
-	}
-
+	function openComposer() { showComposer(); menuOpen = false; }
+	function openAccounts() { mailUi.accountsOpen = true; menuOpen = false; }
 	function toggleTheme() {
 		darkMode = !darkMode;
 		document.documentElement.classList.toggle('dark', darkMode);
 		localStorage.setItem('cloud-mail-theme', darkMode ? 'dark' : 'light');
 	}
-
 	function openAnnouncement() {
 		noticeOpen = true;
 		if (announcement.duration > 0) setTimeout(() => { noticeOpen = false; }, announcement.duration);
 	}
+	async function signOut() {
+		try { await logoutApi(); } catch { /* Clear the local token when the API is offline. */ }
+		profileOpen = false;
+		void goto('/login');
+	}
+	function selectedMailboxFolder() {
+		const path = page.url.pathname;
+		const source = page.url.searchParams.get('from');
+		if (path === '/starred' || (path.startsWith('/mail/') && source === 'starred')) return 'starred' as const;
+		if (path === '/sent' || (path.startsWith('/mail/') && source === 'sent')) return 'sent' as const;
+		if (path === '/' || path === '/inbox' || (path.startsWith('/mail/') && (!source || source === 'inbox'))) return 'inbox' as const;
+		return null;
+	}
 
 	onMount(() => {
-		void (async () => {
-			await hydratePreviewData();
-			await restorePreviewAttachments();
-			loadPreviewSession();
-			dataReady = true;
-			if (!previewSession.email) void goto('/login');
-		})();
 		darkMode = localStorage.getItem('cloud-mail-theme') === 'dark';
 		document.documentElement.classList.toggle('dark', darkMode);
-		try {
-			const settings = JSON.parse(localStorage.getItem('cloud-mail-system-settings-preview') || '{}') as { announcementEnabled?: boolean; announcementTitle?: string; announcementBody?: string; announcementPosition?: string; announcementDuration?: number };
-			announcement = { enabled: settings.announcementEnabled ?? true, title: settings.announcementTitle || announcement.title, body: settings.announcementBody || announcement.body, position: settings.announcementPosition || 'top-right', duration: Number(settings.announcementDuration ?? 5000) };
-		} catch { /* Keep the default announcement. */ }
+		void (async () => {
+			if (!apiEnabled) {
+				apiNotice = 'API belum dikonfigurasi. Isi VITE_API_BASE_URL untuk menghubungkan workspace.';
+				dataReady = true;
+				void goto('/login');
+				return;
+			}
+			try {
+				const user = await loadApiSession();
+				if (!user) { dataReady = true; void goto('/login'); return; }
+				const [accounts, config] = await Promise.all([fetchApiAccounts(), websiteConfig()]);
+				mailAccounts.splice(0, mailAccounts.length, ...accounts);
+				mailUi.currentAccountId = accounts.find((account) => account.primary)?.id ?? accounts[0]?.id ?? 0;
+				announcement = {
+					enabled: config.notice === 0,
+					title: config.noticeTitle ?? '',
+					body: config.noticeContent ?? '',
+					position: config.noticePosition || 'top-right',
+					duration: Number(config.noticeDuration ?? 0),
+					width: Number(config.noticeWidth ?? 400),
+					offset: Number(config.noticeOffset ?? 0),
+					type: config.noticeType || 'info'
+				};
+				if (announcement.enabled) openAnnouncement();
+			} catch (error) {
+				apiNotice = error instanceof Error ? error.message : 'Workspace API tidak dapat dimuat.';
+				if (!apiUser.value) void goto('/login');
+			}
+			dataReady = true;
+		})();
 	});
 
 	$effect(() => {
 		if (!dataReady) return;
-		syncPreviewSession();
-		if (!previewSession.email) { void goto('/login'); return; }
-		persistPreviewData();
+		if (!apiUser.value) { void goto('/login'); return; }
+		const path = page.url.pathname;
+		const requiredByPath: Record<string, string> = {
+			'/analysis': 'analysis:query', '/all-mail': 'all-email:query', '/all-users': 'user:query',
+			'/role': 'role:query', '/invite-code': 'reg-key:query', '/system-settings': 'setting:query'
+		};
+		const required = requiredByPath[path];
+		if (required && !hasPermission(required)) void goto('/inbox');
+	});
+
+	$effect(() => {
+		if (!dataReady || !apiUser.value) return;
+		const path = page.url.pathname;
+		const folder = selectedMailboxFolder();
+		const accountId = mailUi.currentAccountId;
+		const account = mailAccounts.find((item) => item.id === accountId);
+		const refreshKey = mailUi.refreshKey;
+		const isDrafts = path === '/draft';
+		const mailboxKey = `${folder ?? (isDrafts ? 'drafts' : 'none')}:${accountId}:${account?.allMail ? 1 : 0}:${refreshKey}:${apiUser.value.userId}`;
+		if (mailboxKey !== lastMailboxKey) {
+			lastMailboxKey = mailboxKey;
+			lastMailboxFetchKey = '';
+			mailboxRequestId += 1;
+			mailUi.mailboxPage = 1;
+			mailUi.mailboxPageCursors = [0];
+			mailUi.mailboxHasMore = false;
+			mailUi.mailboxLoading = false;
+		}
+		if (!folder) {
+			if (isDrafts) {
+				const requestKey = `${mailboxKey}:drafts`;
+				if (requestKey === lastMailboxFetchKey) return;
+				lastMailboxFetchKey = requestKey;
+				const requestId = ++mailboxRequestId;
+				mailMessages.splice(0, mailMessages.length);
+				void loadDrafts().then((drafts) => {
+					if (requestId === mailboxRequestId && page.url.pathname === '/draft') mailMessages.splice(0, mailMessages.length, ...drafts);
+				}).catch((error) => { apiNotice = error instanceof Error ? error.message : 'Drafts could not be loaded.'; });
+			}
+			return;
+		}
+		if (folder !== 'starred' && !account) {
+			mailMessages.splice(0, mailMessages.length);
+			return;
+		}
+		const pageNumber = mailUi.mailboxPage;
+		const requestKey = `${mailboxKey}:${pageNumber}`;
+		if (requestKey === lastMailboxFetchKey) return;
+		lastMailboxFetchKey = requestKey;
+		const requestId = ++mailboxRequestId;
+		const cursor = mailUi.mailboxPageCursors[pageNumber - 1] ?? 0;
+		mailUi.mailboxLoading = true;
+		mailUi.mailboxHasMore = false;
+		mailMessages.splice(0, mailMessages.length);
+		void fetchApiMailbox(folder, account, cursor || undefined).then((result) => {
+			if (requestId !== mailboxRequestId) return;
+			mailMessages.splice(0, mailMessages.length, ...result.messages);
+			const pageCursors = mailUi.mailboxPageCursors.slice(0, pageNumber);
+			pageCursors[pageNumber] = result.cursor;
+			mailUi.mailboxPageCursors = pageCursors;
+			const cursorAdvanced = !cursor || (result.cursor > 0 && result.cursor < cursor);
+			mailUi.mailboxHasMore = result.hasMore && result.cursor > 0 && cursorAdvanced;
+			apiNotice = '';
+		}).catch((error) => {
+			if (requestId === mailboxRequestId) apiNotice = error instanceof Error ? error.message : 'Email tidak dapat dimuat.';
+		}).finally(() => {
+			if (requestId === mailboxRequestId) mailUi.mailboxLoading = false;
+		});
 	});
 
 	$effect(() => {
 		page.url.pathname;
 		if (mainElement) mainElement.scrollTop = 0;
-	});
-
-	$effect(() => {
-		if (!dataReady || !previewSession.email) return;
-		const path = page.url.pathname;
-		const permissionByPath: Record<string, string> = {
-			'/starred': 'View starred messages', '/sent': 'Send email', '/draft': 'Send email',
-			'/analysis': 'View analytics', '/all-mail': 'View all mail', '/all-users': 'Manage users',
-			'/role': 'Manage roles', '/invite-code': 'Manage invite codes', '/system-settings': 'Manage system settings'
-		};
-		const permission = permissionByPath[path];
-		if (permission && !hasPreviewPermission(permission)) void goto('/inbox');
 	});
 </script>
 
@@ -125,22 +212,22 @@
 			<Button href="/settings" variant="ghost" size="icon-sm" class="hidden text-muted-foreground sm:inline-flex" aria-label="Settings"><Settings data-icon="inline-start" /></Button>
 			<div class="relative">
 				<Button variant="ghost" class="ml-1 h-10 gap-2 rounded-xl px-1.5" aria-expanded={profileOpen} aria-label="Open account menu" onclick={() => (profileOpen = !profileOpen)}>
-					<Avatar.Root size="sm"><Avatar.Fallback class="bg-secondary text-xs font-semibold text-secondary-foreground">{previewSession.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase() || 'CM'}</Avatar.Fallback></Avatar.Root>
+					<Avatar.Root size="sm"><Avatar.Fallback class="bg-secondary text-xs font-semibold text-secondary-foreground">{userInitials}</Avatar.Fallback></Avatar.Root>
 					<ChevronDown class="hidden text-muted-foreground sm:block" size={13} />
 				</Button>
 				{#if profileOpen}
 					<div class="absolute right-0 top-11 z-30 w-[260px] rounded-xl border bg-popover p-3 shadow-lg">
 						<div class="border-b px-2 pb-3">
-							<p class="text-xs font-semibold">{previewSession.name}</p>
-							<p class="mt-1 truncate text-[10px] text-muted-foreground">{previewSession.email}</p>
-							<span class="mt-2 inline-flex rounded-full bg-secondary px-2 py-1 text-[9px] font-medium">{previewSession.role}</span>
+							<p class="text-xs font-semibold">{userName}</p>
+							<p class="mt-1 truncate text-[10px] text-muted-foreground">{apiUser.value?.email}</p>
+							<span class="mt-2 inline-flex rounded-full bg-secondary px-2 py-1 text-[9px] font-medium">{apiRoleName()}</span>
 						</div>
 						<div class="grid grid-cols-2 gap-2 px-2 py-3 text-[10px]">
-							<span class="text-muted-foreground">Messages sent</span><span class="text-right font-medium">{adminUsers.find((user) => user.email === previewSession.email)?.sent ?? 0}</span>
-						<span class="text-muted-foreground">Mailboxes</span><span class="text-right font-medium">{mailAccounts.filter((account) => account.ownerEmail === previewSession.email).length} connected</span>
+							<span class="text-muted-foreground">Messages sent</span><span class="text-right font-medium">{apiUser.value?.sendCount ?? 0}</span>
+						<span class="text-muted-foreground">Mailboxes</span><span class="text-right font-medium">{mailAccounts.length} connected</span>
 						</div>
 						<Button href="/settings" variant="ghost" size="sm" class="w-full justify-start text-xs" onclick={() => (profileOpen = false)}>Account settings</Button>
-						<Button href="/login" variant="ghost" size="sm" class="w-full justify-start text-xs text-muted-foreground" onclick={() => { signOutPreview(); profileOpen = false; }}>Sign out</Button>
+						<Button href="/login" variant="ghost" size="sm" class="w-full justify-start text-xs text-muted-foreground" onclick={() => { void signOut(); }}>Sign out</Button>
 					</div>
 				{/if}
 			</div>
@@ -149,7 +236,12 @@
 
 	<div class="flex min-h-0 flex-1 overflow-hidden">
 		<MailSidebar class="hidden lg:flex" onCompose={openComposer} onAccounts={openAccounts} />
-		<main bind:this={mainElement} id="main-content" class="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-card lg:m-3 lg:ml-0 lg:rounded-2xl lg:border lg:shadow-[0_12px_40px_-30px_rgba(20,80,85,0.35)]">{@render children()}</main>
+		<main bind:this={mainElement} id="main-content" class="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain bg-card lg:m-3 lg:ml-0 lg:rounded-2xl lg:border lg:shadow-[0_12px_40px_-30px_rgba(20,80,85,0.35)]">
+			{#if !dataReady}<div class="flex h-full items-center justify-center text-xs text-muted-foreground">Loading workspace…</div>{:else}
+				{#if apiNotice}<div role="alert" class="mx-4 mt-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive sm:mx-6 lg:mx-8">{apiNotice}</div>{/if}
+				{@render children()}
+			{/if}
+		</main>
 	</div>
 
 	{#if menuOpen}
@@ -161,8 +253,8 @@
 	{#if mailUi.composeOpen}<ComposeDialog />{/if}
 	{#if mailUi.accountsOpen}<AccountManagerDialog />{/if}
 	{#if noticeOpen}
-		<div class="pointer-events-none fixed inset-0 z-50 flex p-4 {announcement.position.startsWith('bottom') ? 'items-end' : 'items-start'} {announcement.position.endsWith('left') ? 'justify-start' : 'justify-end'}" role="status">
-			<div class="pointer-events-auto w-full max-w-[360px] rounded-xl border bg-background p-4 shadow-xl">
+		<div class="pointer-events-none fixed inset-0 z-50 flex {announcement.position.startsWith('bottom') ? 'items-end' : 'items-start'} {announcement.position.endsWith('left') ? 'justify-start' : 'justify-end'}" style={`padding:${16 + Math.max(0, announcement.offset)}px`} role="status">
+			<div class="pointer-events-auto w-full rounded-xl border bg-background p-4 shadow-xl {announcement.type === 'warning' ? 'border-amber-500/50' : announcement.type === 'success' ? 'border-emerald-500/50' : announcement.type === 'primary' ? 'border-primary/50' : ''}" style={`max-width:min(${Math.max(240, announcement.width)}px,calc(100vw - ${32 + Math.max(0, announcement.offset) * 2}px))`}>
 				<div class="flex items-start justify-between gap-3"><h2 class="text-xs font-semibold">{announcement.title}</h2><Button variant="ghost" size="icon-xs" aria-label="Close announcement" onclick={() => (noticeOpen = false)}><X data-icon="inline-start" /></Button></div>
 				<p class="mt-2 whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">{announcement.body}</p>
 			</div>

@@ -17,9 +17,11 @@
 	import { normalizeRichImage, normalizeRichLink, plainTextToHtml, sanitizeRichHtml } from '$lib/rich-text.js';
 	import RichMailBody from '$lib/components/mail/RichMailBody.svelte';
 	import { mailAccounts } from '$lib/mail-accounts.svelte.js';
-	import { adminRoles, adminUsers } from '$lib/admin-data.svelte.js';
-	import { previewSession, recentContacts } from '$lib/preview-state.svelte.js';
+	import { hasPermission } from '$lib/permissions.svelte.js';
+	import { apiUser } from '$lib/api/session.svelte.js';
 	import { removeAttachment as removeStoredAttachment, storeAttachment } from '$lib/attachment-store.js';
+	import { sendApiEmail } from '$lib/api/mail.js';
+	import { deleteDrafts, saveDraft as persistDraft } from '$lib/draft-store.js';
 
 	let recipientInput = $state('');
 	let recipients = $state<string[]>(mailUi.composeTo ? mailUi.composeTo.split(',').map((email) => email.trim()).filter(Boolean) : []);
@@ -28,6 +30,7 @@
 	const draftId = mailUi.composeDraftId;
 	const existingDraft = mailMessages.find((message) => message.id === draftId);
 	let notice = $state('');
+	let sending = $state(false);
 	let contactsOpen = $state(false);
 	let selectedContacts = $state<string[]>([]);
 	let linkOpen = $state(false);
@@ -51,7 +54,9 @@
 	let linkInput = $state<HTMLInputElement | null>(null);
 	let attachmentInput = $state<HTMLInputElement | null>(null);
 	let imageInput = $state<HTMLInputElement | null>(null);
-	const sender = $derived(mailAccounts.find((account) => account.id === mailUi.currentAccountId)?.email ?? previewSession.email);
+	const sender = $derived(mailAccounts.find((account) => account.id === mailUi.currentAccountId)?.email ?? apiUser.value?.email ?? '');
+	const userName = $derived(apiUser.value?.name || apiUser.value?.email || '');
+	const recentContacts = $derived([...new Set(mailMessages.flatMap((message) => [message.address, ...(message.recipients ?? [])]))].filter((email) => email && email !== apiUser.value?.email).slice(0, 500));
 
 	onMount(() => {
 		if (!editorContainer) return;
@@ -99,7 +104,6 @@
 	}
 
 	function removeContacts() {
-		for (let index = recentContacts.length - 1; index >= 0; index--) if (selectedContacts.includes(recentContacts[index])) recentContacts.splice(index, 1);
 		recipients = recipients.filter((email) => !selectedContacts.includes(email));
 		selectedContacts = [];
 	}
@@ -210,16 +214,17 @@
 	function saveDraft() {
 		const { text, html } = readBody();
 		if (!subject.trim() && !recipients.length && !html && !attachments.length) {
+			if (draftId) void deleteDrafts([draftId]);
 			hideComposer();
 			return;
 		}
-		const id = draftId || `local-${crypto.randomUUID()}`;
+		const id = draftId || `draft:${crypto.randomUUID()}`;
 		const existing = mailMessages.find((message) => message.id === id);
 		const draft: MailMessage = {
 			id,
-			from: previewSession.name,
+			from: userName,
 			address: sender,
-			initials: previewSession.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase(),
+			initials: userName.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase(),
 			folder: 'drafts' as const,
 			subject: subject || '(No subject)',
 			preview: text.slice(0, 180) || (html ? 'Rich content' : recipients.join(', ')),
@@ -233,10 +238,11 @@
 			read: true,
 			starred: false,
 			archived: false,
-			ownerEmail: previewSession.email
+			ownerEmail: apiUser.value?.email
 		};
 		if (existing) Object.assign(existing, draft);
 		else mailMessages.unshift(draft);
+		persistDraft(draft);
 		hideComposer();
 	}
 
@@ -244,42 +250,49 @@
 		saveDraft();
 	}
 
-	function prepareMessage(event: SubmitEvent) {
+	async function prepareMessage(event: SubmitEvent) {
 		event.preventDefault();
+		if (sending) return;
 		if (recipientInput.trim()) addRecipient();
-		const settings = JSON.parse(localStorage.getItem('cloud-mail-system-settings-preview') || '{}') as { sendingEnabled?: boolean; noRecipient?: boolean };
-		if (!recipients.length && !settings.noRecipient) {
+		if (!recipients.length) {
 			notice = 'Add at least one recipient.';
 			return;
 		}
 		if (!subject.trim()) { notice = 'Add a subject.'; return; }
 		const { text, html } = readBody();
 		if (!html) { notice = 'Write a message before sending.'; return; }
-		if (settings.sendingEnabled === false) { notice = 'Sending is disabled in system settings.'; return; }
-		const user = adminUsers.find((item) => item.email === previewSession.email);
-		const role = adminRoles.find((item) => item.name === user?.role);
-		if (role?.sendType === 'ban' || (role?.permissions && !role.permissions.includes('Send email') && user?.role !== 'Administrator')) { notice = 'Your role cannot send mail.'; return; }
-		if (role?.sendType === 'internal' && recipients.some((email) => email.split('@')[1] !== sender.split('@')[1])) { notice = 'Your role can send only within the current domain.'; return; }
-		const sentToday = mailMessages.filter((message) => message.folder === 'sent' && message.ownerEmail === previewSession.email && message.timestamp?.slice(0, 10) === new Date().toISOString().slice(0, 10)).reduce((count, message) => count + Math.max(1, message.recipients?.length ?? 0), 0);
-		const usage = role?.sendType === 'count' ? user?.sent ?? 0 : sentToday;
-		if (role?.sendLimit && usage + Math.max(1, recipients.length) > role.sendLimit) { notice = 'Your local sending limit has been reached.'; return; }
-		if (draftId) {
-			const draftIndex = mailMessages.findIndex((message) => message.id === draftId);
-			if (draftIndex >= 0) mailMessages.splice(draftIndex, 1);
+		if (!hasPermission('Send email')) { notice = 'Your role cannot send mail.'; return; }
+		sending = true;
+		const apiAttachments: { filename: string; type?: string; content: string }[] = [];
+		try {
+			for (const attachment of attachments) {
+				if (!attachment.file) throw new Error(`Attachment “${attachment.filename}” is unavailable.`);
+				const bytes = new Uint8Array(await attachment.file.arrayBuffer());
+				let binary = '';
+				for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+				apiAttachments.push({ filename: attachment.filename, type: attachment.contentType || attachment.file.type, content: btoa(binary) });
+			}
+			await sendApiEmail({
+				accountId: mailUi.currentAccountId,
+				name: userName,
+				receiveEmail: [...recipients],
+				text,
+				content: html,
+				subject: subject.trim(),
+				attachments: apiAttachments
+			});
+			if (draftId) {
+				await deleteDrafts([draftId]);
+				mailMessages.splice(0, mailMessages.length, ...mailMessages.filter((message) => message.id !== draftId));
+			}
+			mailUi.refreshKey += 1;
+			hideComposer();
+			void goto('/sent');
+		} catch (error) {
+			notice = error instanceof Error ? error.message : 'Message could not be sent.';
+		} finally {
+			sending = false;
 		}
-		const now = new Date();
-		mailMessages.unshift({
-			id: `local-${crypto.randomUUID()}`, from: previewSession.name, address: sender,
-			initials: previewSession.name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase(),
-			folder: 'sent', subject: subject.trim(), preview: text.slice(0, 180) || 'Rich content', body: text ? [text] : [], htmlBody: html,
-			recipients: [...recipients], attachments: [...attachments], status: 'delivered', timestamp: now.toISOString(),
-			time: now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), date: now.toLocaleString(),
-			read: true, starred: false, archived: false, ownerEmail: previewSession.email
-		});
-		if (user) user.sent += Math.max(1, recipients.length);
-		recentContacts.splice(0, recentContacts.length, ...[...new Set([...recipients, ...recentContacts])].slice(0, 500));
-		hideComposer();
-		void goto('/sent');
 	}
 </script>
 
@@ -287,7 +300,7 @@
 	<button class="absolute inset-0 h-full w-full cursor-default" aria-label="Close composer" onclick={close}></button>
 	<div role="dialog" aria-modal="true" aria-labelledby="compose-title" class="relative z-10 flex w-full flex-col overflow-hidden border bg-background shadow-2xl {fullscreen ? 'h-svh max-h-svh rounded-none' : 'max-h-[min(760px,100svh)] rounded-t-2xl sm:max-w-[620px] sm:rounded-xl'}" tabindex="-1">
 		<div class="flex shrink-0 items-center justify-between bg-muted/50 px-4 py-3">
-			<div><h2 id="compose-title" class="text-xs font-semibold">{draftId ? 'Edit draft' : 'New message'}</h2><p class="mt-0.5 text-[9px] text-muted-foreground">From {previewSession.name} &lt;{sender}&gt;</p></div>
+			<div><h2 id="compose-title" class="text-xs font-semibold">{draftId ? 'Edit draft' : 'New message'}</h2><p class="mt-0.5 text-[9px] text-muted-foreground">From {userName} &lt;{sender}&gt;</p></div>
 			<div class="flex items-center gap-1"><Button variant="ghost" size="icon-xs" aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen composer'} onclick={() => (fullscreen = !fullscreen)}>{#if fullscreen}<Minimize2 data-icon="inline-start" />{:else}<Maximize2 data-icon="inline-start" />{/if}</Button><Button variant="ghost" size="icon-xs" aria-label="Close composer" onclick={close}><X data-icon="inline-start" /></Button></div>
 		</div>
 		<form class="flex min-h-0 flex-1 flex-col px-4" onsubmit={prepareMessage}>
@@ -336,7 +349,7 @@
 			{#if notice}<p class="mb-2 text-[10px] text-muted-foreground" role="status">{notice}</p>{/if}
 			<input bind:this={attachmentInput} type="file" multiple class="hidden" onchange={addAttachments} />
 			<div class="flex shrink-0 items-center justify-between gap-3 border-t py-3">
-				<div class="flex items-center gap-1"><Button type="submit" size="sm" class="rounded-full px-4">Send <Send data-icon="inline-start" /></Button><Button type="button" variant="ghost" size="icon-sm" aria-label="Add attachments" onclick={() => attachmentInput?.click()}><Paperclip data-icon="inline-start" /></Button><Button type="button" variant="ghost" size="icon-sm" aria-label="Clear message and attachments" onclick={clearContent}><Eraser data-icon="inline-start" /></Button></div>
+				<div class="flex items-center gap-1"><Button type="submit" size="sm" class="rounded-full px-4" disabled={sending}>{sending ? 'Sending…' : 'Send'} <Send data-icon="inline-start" /></Button><Button type="button" variant="ghost" size="icon-sm" aria-label="Add attachments" onclick={() => attachmentInput?.click()}><Paperclip data-icon="inline-start" /></Button><Button type="button" variant="ghost" size="icon-sm" aria-label="Clear message and attachments" onclick={clearContent}><Eraser data-icon="inline-start" /></Button></div>
 				<Button type="button" variant="ghost" size="sm" class="rounded-full text-muted-foreground" onclick={saveDraft}>Save draft</Button>
 			</div>
 		</form>

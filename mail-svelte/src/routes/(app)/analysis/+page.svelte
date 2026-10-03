@@ -1,59 +1,43 @@
 <script lang="ts">
-	import { ArrowDownRight, ArrowUpRight, Mail, Send, Users, WalletCards } from '@lucide/svelte';
+	import { onMount } from 'svelte';
+	import { ArrowDownRight, Mail, Send, Users, WalletCards } from '@lucide/svelte';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import SelectControl from '$lib/components/SelectControl.svelte';
-	import { mailMessages } from '$lib/mail-data.svelte.js';
-	import { mailAccounts } from '$lib/mail-accounts.svelte.js';
-	import { adminUsers } from '$lib/admin-data.svelte.js';
+	import { fetchAnalysis, type AnalysisData } from '$lib/api/admin.js';
 
-	let range = $state('Last 12 months');
-	const now = new Date();
-	const periodStart = $derived.by(() => {
-		const start = new Date(now);
-		if (range === 'Last 7 days') start.setDate(start.getDate() - 6);
-		else if (range === 'Last 30 days') start.setDate(start.getDate() - 29);
-		else start.setMonth(start.getMonth() - 11);
-		start.setHours(0, 0, 0, 0);
-		return start;
+	let data = $state<AnalysisData | null>(null);
+	let notice = $state('');
+	let loading = $state(true);
+	onMount(() => {
+		void fetchAnalysis(Intl.DateTimeFormat().resolvedOptions().timeZone).then((value) => { data = value; })
+			.catch((error) => { notice = error instanceof Error ? error.message : 'Analytics could not be loaded.'; })
+			.finally(() => { loading = false; });
 	});
-	const periodMessages = $derived(mailMessages.filter((message) => message.timestamp && new Date(message.timestamp) >= periodStart));
+
 	const summary = $derived([
-		{ label: 'Messages received', value: periodMessages.filter((message) => message.folder === 'inbox').length, detail: `${mailMessages.filter((message) => message.folder === 'inbox' && !message.read).length} unread`, icon: Mail },
-		{ label: 'Messages sent', value: periodMessages.filter((message) => message.folder === 'sent').length, detail: `${periodMessages.filter((message) => message.folder === 'sent' && message.status === 'delivered').length} delivered`, icon: Send },
-		{ label: 'Mailboxes', value: mailAccounts.length, detail: `${mailAccounts.filter((account) => account.pinned).length} pinned`, icon: WalletCards },
-		{ label: 'Users', value: adminUsers.length, detail: `${adminUsers.filter((user) => user.status === 'Active').length} active`, icon: Users }
+		{ label: 'Messages received', value: Number(data?.numberCount?.receiveTotal ?? 0), detail: `${Number(data?.numberCount?.normalReceiveTotal ?? 0).toLocaleString()} active · ${Number(data?.numberCount?.delReceiveTotal ?? 0).toLocaleString()} deleted`, icon: Mail },
+		{ label: 'Messages sent', value: Number(data?.numberCount?.sendTotal ?? 0), detail: `${Number(data?.numberCount?.normalSendTotal ?? 0).toLocaleString()} active · ${Number(data?.numberCount?.delSendTotal ?? 0).toLocaleString()} deleted`, icon: Send },
+		{ label: 'Mailboxes', value: Number(data?.numberCount?.accountTotal ?? 0), detail: `${Number(data?.numberCount?.normalAccountTotal ?? 0).toLocaleString()} active · ${Number(data?.numberCount?.delAccountTotal ?? 0).toLocaleString()} deleted`, icon: WalletCards },
+		{ label: 'Users', value: Number(data?.numberCount?.userTotal ?? 0), detail: `${Number(data?.numberCount?.normalUserTotal ?? 0).toLocaleString()} active · ${Number(data?.numberCount?.delUserTotal ?? 0).toLocaleString()} deleted`, icon: Users }
 	]);
 	const buckets = $derived.by(() => {
-		const count = range === 'Last 12 months' ? 12 : range === 'Last 30 days' ? 6 : 7;
-		return Array.from({ length: count }, (_, index) => {
-			const start = new Date(periodStart);
-			if (range === 'Last 12 months') start.setMonth(start.getMonth() + index);
-			else start.setDate(start.getDate() + index * (range === 'Last 30 days' ? 5 : 1));
-			const end = new Date(start);
-			if (range === 'Last 12 months') end.setMonth(end.getMonth() + 1);
-			else end.setDate(end.getDate() + (range === 'Last 30 days' ? 5 : 1));
-			const messages = periodMessages.filter((message) => new Date(message.timestamp ?? 0) >= start && new Date(message.timestamp ?? 0) < end);
-			return { label: start.toLocaleDateString('en-US', range === 'Last 12 months' ? { month: 'short' } : { month: 'short', day: 'numeric' }), received: messages.filter((message) => message.folder === 'inbox').length, sent: messages.filter((message) => message.folder === 'sent').length };
-		});
+		const received = new Map((data?.emailDayCount?.receiveDayCount ?? []).map((item) => [item.date, Number(item.total)]));
+		const sent = new Map((data?.emailDayCount?.sendDayCount ?? []).map((item) => [item.date, Number(item.total)]));
+		return [...new Set([...received.keys(), ...sent.keys()])].sort().map((date) => ({
+			label: new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+			received: received.get(date) ?? 0, sent: sent.get(date) ?? 0
+		}));
 	});
 	const maximum = $derived(Math.max(1, ...buckets.flatMap((bucket) => [bucket.received, bucket.sent])));
-	const senders = $derived.by(() => {
-		const counts = new Map<string, number>();
-		for (const message of periodMessages) if (message.folder === 'sent') counts.set(message.address, (counts.get(message.address) ?? 0) + 1);
-		return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([name, count]) => ({ name, count }));
-	});
-	const deliveryRate = $derived.by(() => {
-		const sent = periodMessages.filter((message) => message.folder === 'sent');
-		return sent.length ? Math.round(sent.filter((message) => message.status === 'delivered').length / sent.length * 100) : 0;
-	});
+	const senders = $derived((data?.receiveRatio?.nameRatio ?? []).map((item) => ({ name: item.name, count: Number(item.total) })));
 </script>
 
 <section class="min-h-full px-3 pb-10 pt-6 sm:px-6 sm:pt-7 lg:px-8">
+	{#if notice}<p role="alert" class="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">{notice}</p>{/if}
 	<div class="mx-auto max-w-[1180px]">
 		<div class="flex flex-wrap items-end justify-between gap-4">
 			<div><h1 class="text-[27px] font-semibold tracking-[-0.055em] sm:text-[30px]">Analytics</h1><p class="mt-1 text-[13px] text-muted-foreground">A workspace-wide view of mailbox activity.</p></div>
-			<SelectControl bind:value={range} items={['Last 12 months', 'Last 30 days', 'Last 7 days'].map((option) => ({ value: option, label: option }))} aria-label="Date range" class="h-10 text-xs" />
+			<Badge variant="outline" class="h-8 rounded-full px-3 text-[10px]">Last 15 days</Badge>
 		</div>
 
 		<div class="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -83,13 +67,13 @@
 			</section>
 
 			<section class="rounded-xl border bg-card p-4 sm:p-5">
-				<h2 class="text-xs font-semibold">Most active senders</h2><p class="mt-1 text-[10px] text-muted-foreground">Top accounts by message volume</p>
+				<h2 class="text-xs font-semibold">Most common received senders</h2><p class="mt-1 text-[10px] text-muted-foreground">Top sender names in received mail</p>
 				<div class="mt-5 space-y-4">
 					{#each senders as sender (sender.name)}
 						<div><div class="mb-1.5 flex justify-between gap-3 text-[10px]"><span class="truncate text-muted-foreground">{sender.name}</span><span class="shrink-0 tabular-nums">{sender.count.toLocaleString()}</span></div><div class="h-1.5 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary/75" style={`width:${sender.count / Math.max(1, senders[0]?.count ?? 1) * 100}%`}></div></div></div>
-				{:else}<p class="text-[10px] text-muted-foreground">No sent mail in this period.</p>{/each}
+				{:else}<p class="text-[10px] text-muted-foreground">No sender totals are available yet.</p>{/each}
 				</div>
-				<div class="mt-6 rounded-lg bg-muted/50 p-3"><p class="text-[10px] font-medium">Delivery status</p><div class="mt-3 flex items-center gap-3"><div class="relative flex size-12 items-center justify-center rounded-full border-[5px] border-primary/80 text-[11px] font-semibold">{deliveryRate}%<span class="absolute -right-1 -top-1 size-3 rounded-full border-2 border-background bg-primary"></span></div><div><p class="text-xs font-medium">{deliveryRate}% delivered</p><p class="mt-1 text-[9px] text-muted-foreground">Across the selected period</p></div></div></div>
+				<div class="mt-6 rounded-lg bg-muted/50 p-3"><p class="text-[10px] font-medium">Sent today</p><div class="mt-3 flex items-center gap-3"><div class="relative flex size-12 items-center justify-center rounded-full border-[5px] border-primary/80 text-[11px] font-semibold">{Number(data?.daySendTotal ?? 0).toLocaleString()}<span class="absolute -right-1 -top-1 size-3 rounded-full border-2 border-background bg-primary"></span></div><div><p class="text-xs font-medium">Messages sent today</p><p class="mt-1 text-[9px] text-muted-foreground">Across all users and mailboxes</p></div></div></div>
 			</section>
 		</div>
 
