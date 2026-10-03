@@ -10,7 +10,7 @@
 	import { Separator } from '$lib/components/ui/separator/index.js';
 	import { mailMessages, type MailAttachment } from '$lib/mail-data.svelte.js';
 	import { mailAccounts } from '$lib/mail-accounts.svelte.js';
-	import RichMailBody from '$lib/components/mail/RichMailBody.svelte';
+	import EmailHtmlBody from '$lib/components/mail/EmailHtmlBody.svelte';
 	import { mailUi, showComposer } from '$lib/mail-ui.svelte.js';
 	import { hasPermission } from '$lib/permissions.svelte.js';
 	import { deleteApiEmails, fetchApiAllMessages, fetchApiMessage, fetchApiStarredMessage, markApiEmailsRead, setApiEmailStar } from '$lib/api/mail.js';
@@ -39,15 +39,20 @@
 	let savingStar = $state(false);
 	let deletingMessage = $state(false);
 	let loadingMessageId = '';
+	let attemptedMessageId = '';
+	let detailRequestId = 0;
 	let retryKey = $state(0);
 
 	$effect(() => {
 		retryKey;
 		const id = page.params.id;
 		const source = page.url.searchParams.get('from');
-		if (!id || mailMessages.some((item) => item.id === id) || loadingMessageId === id) return;
+		const existingMessage = mailMessages.find((item) => item.id === id);
+		if (!id || existingMessage?.htmlBody || loadingMessageId === id || attemptedMessageId === id) return;
 		const account = mailAccounts.find((item) => item.id === mailUi.currentAccountId) ?? mailAccounts.find((item) => item.primary);
 		if (source !== 'all-mail' && source !== 'starred' && !account) return;
+		const currentRequestId = ++detailRequestId;
+		attemptedMessageId = id;
 		loadingMessageId = id;
 		loading = true;
 		const request = source === 'all-mail'
@@ -56,13 +61,26 @@
 				? fetchApiStarredMessage(id)
 				: fetchApiMessage(id, source === 'sent' ? 'sent' : 'inbox', account);
 		void request.then((found) => {
-			if (found && !mailMessages.some((item) => item.id === found.id)) mailMessages.unshift(found);
-			if (!found) actionNotice = 'Message could not be found in the selected mailbox.';
+			if (currentRequestId !== detailRequestId) return;
+			actionNotice = '';
+			const current = mailMessages.find((item) => item.id === id);
+			if (found && current) {
+				if (found.htmlBody) current.htmlBody = found.htmlBody;
+				if (found.body.length) current.body = found.body;
+				if (found.attachments?.length) current.attachments = found.attachments;
+			} else if (found) {
+				mailMessages.unshift(found);
+			} else if (!current) {
+				actionNotice = 'Message could not be found in the selected mailbox.';
+			}
 		}).catch((error) => {
+			if (currentRequestId !== detailRequestId) return;
 			actionNotice = error instanceof Error ? error.message : 'Message could not be loaded.';
 		}).finally(() => {
-			loading = false;
-			if (!mailMessages.some((item) => item.id === id)) loadingMessageId = '';
+			if (currentRequestId === detailRequestId) {
+				loading = false;
+				loadingMessageId = '';
+			}
 		});
 	});
 
@@ -132,6 +150,13 @@
 	function formatBytes(bytes: number) {
 		return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 	}
+
+	function retryMessageLoad() {
+		actionNotice = '';
+		attemptedMessageId = '';
+		loadingMessageId = '';
+		retryKey += 1;
+	}
 </script>
 
 <svelte:window onkeydown={(event) => { if (event.key === 'Escape' && !previewAttachment && !deleteOpen && !mailUi.composeOpen) void goto(backHref); }} />
@@ -180,7 +205,9 @@
 
 			<Separator class="my-5" />
 			{#if message.htmlBody}
-				<RichMailBody html={message.htmlBody} class="max-w-[720px] text-sm leading-[1.85] text-foreground/85" />
+				<EmailHtmlBody html={message.htmlBody} class="max-w-[720px] text-sm leading-[1.85] text-foreground/85" />
+			{:else if loading && !message.body.length}
+				<div class="max-w-[720px] py-6"><LoadingState label="Loading message content…" /></div>
 			{:else}
 				<div class="max-w-[720px] space-y-4 text-sm leading-[1.85] text-foreground/85">
 					{#each message.body as paragraph, index (index)}<p class="whitespace-pre-line">{paragraph}</p>{/each}
@@ -212,7 +239,7 @@
 	{:else}
 		<div class="mx-auto max-w-lg py-16 text-center">
 			{#if loading}<div class="flex justify-center"><LoadingState label="Loading message…" /></div>{:else}<h1 class="text-lg font-medium">Message not found</h1><p role="alert" class="mt-2 text-xs text-destructive">{actionNotice || 'This message may have been deleted or is unavailable.'}</p>{/if}
-			<div class="mt-5 flex justify-center gap-2"><Button href={backHref} variant="outline" class="rounded-full">Back to mail</Button>{#if !loading}<Button variant="outline" class="rounded-full" onclick={() => { actionNotice = ''; retryKey += 1; }}>Retry</Button>{/if}</div>
+			<div class="mt-5 flex justify-center gap-2"><Button href={backHref} variant="outline" class="rounded-full">Back to mail</Button>{#if !loading}<Button variant="outline" class="rounded-full" onclick={retryMessageLoad}>Retry</Button>{/if}</div>
 		</div>
 	{/if}
 </section>

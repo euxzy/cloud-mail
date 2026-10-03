@@ -15,6 +15,7 @@
 	import { mailUi, showComposer } from '$lib/mail-ui.svelte.js';
 	import { mailAccounts } from '$lib/mail-accounts.svelte.js';
 	import { mailMessages } from '$lib/mail-data.svelte.js';
+	import { mailSettings } from '$lib/mail-settings.svelte.js';
 	import { apiEnabled } from '$lib/api/client.js';
 	import { apiRoleName, apiUser, loadApiSession, logoutApi } from '$lib/api/session.svelte.js';
 	import { websiteConfig } from '$lib/api/config.js';
@@ -112,6 +113,7 @@
 				if (!user) { dataReady = true; void goto('/login'); return; }
 				const [accounts, config] = await Promise.all([fetchApiAccounts(), websiteConfig()]);
 				mailAccounts.splice(0, mailAccounts.length, ...accounts);
+				mailSettings.r2Domain = config.r2Domain ?? '';
 				mailUi.currentAccountId = accounts.find((account) => account.primary)?.id ?? accounts[0]?.id ?? 0;
 				announcement = {
 					enabled: config.notice === 0,
